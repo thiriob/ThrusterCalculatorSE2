@@ -495,8 +495,11 @@ public sealed class GameDataExtractor
             var atmosphere = geometry.Atmosphere;
             if (!geometry.Measured)
             {
-                atmosphere = StandardAtmosphere;
-                provenance["atmosphere"] = Provenance.Assumed;
+                // Left unknown rather than filled in with a plausible default. Since the BaseGuid
+                // walk landed, the only planet that reaches here is one not yet in the game, so a
+                // fabricated atmosphere would be a guess about content that does not exist to be
+                // checked against. Revisit when the planet ships (Backlog.md).
+                provenance["atmosphere"] = Provenance.Unknown;
             }
             else if (atmosphere is { } a && a.AffectDistance > ImplausibleAtmosphereExtent)
             {
@@ -540,31 +543,17 @@ public sealed class GameDataExtractor
         // report on discarded milestone variants that never reach the config.
         foreach (var planet in planets.Values.OrderBy(p => p.Id, StringComparer.Ordinal))
         {
-            if (planet.ProvenanceOf("atmosphere") == Provenance.Assumed)
+            if (planet.ProvenanceOf("atmosphere") == Provenance.Unknown)
             {
-                Warn("assumedAtmosphere",
-                    $"{planet.Name}: atmosphere geometry is not stated on this planet and is "
-                    + "inherited from a base we cannot resolve; using the standard shape "
-                    + "(full density to 1.08 R, zero at 1.15 R).",
+                Warn("unknownAtmosphere",
+                    $"{planet.Name}: no atmosphere geometry anywhere in its inheritance chain. "
+                    + "Left unknown rather than assumed; the planet is not in the game yet.",
                     sources[planet.Id]);
             }
         }
 
         return planets.Values.OrderBy(p => p.Id, StringComparer.Ordinal).ToList();
     }
-
-    /// <summary>
-    /// Standard atmosphere shape, used when a planet's own is not recoverable.
-    /// </summary>
-    /// <remarks>
-    /// Taken from the VS1_5 planets, the only ones that state it explicitly. Applied as an
-    /// <see cref="Provenance.Assumed"/> value rather than left null, because a null atmosphere means
-    /// <em>airless</em> to the calculator — which would silently zero every atmospheric thruster on
-    /// planets that plainly have air. A visibly assumed value the user can correct beats a confident
-    /// wrong one.
-    /// </remarks>
-    private static Atmosphere StandardAtmosphere =>
-        new() { ConstantAffectDistance = 1.08, AffectDistance = 1.15 };
 
     /// <summary>
     /// Atmosphere extent, in planet radii, beyond which the value is reported as suspect.

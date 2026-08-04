@@ -7,8 +7,9 @@ You give it a departure planet and a ship mass; it tells you how much thrust you
 configuration for each thruster type — accounting for the fact that the thrusters you add have mass
 of their own.
 
-> **Status: design phase.** No code yet. The four documents below are the design, and they are
-> grounded in the actual shipped game data, not guesswork.
+> **Status: working.** `tc extract` produces a config from your installed game, and the desktop app
+> computes thruster loadouts from it. The documents below are the design, grounded in the actual
+> shipped game data rather than guesswork.
 
 ## Why read the game instead of a wiki
 
@@ -27,6 +28,7 @@ The game files had it right. That's the whole premise.
 | **[Design.md](Design.md)** | What the app does and how it feels to use. Modes, UX decisions, and the two things that make this non-trivial. |
 | **[Technic.md](Technic.md)** | Architecture. The producer/consumer split, project layout, the sizing math, testing strategy. |
 | **[Schema.md](Schema.md)** | The `gamedata.json` contract — the interface between the two halves. Stands alone. |
+| **[Backlog.md](Backlog.md)** | Deferred decisions and known gaps, each with enough context to pick up cold. |
 
 ## How it's put together
 

@@ -70,6 +70,7 @@ ThrusterCalculatorSE2/
 
     ── frontend ──
     ThrusterCalculator.Gui/              net9.0  Avalonia. Model + Core only.
+    ThrusterCalculator.Gui.Tests/        net9.0  view-model tests, headless
 ```
 
 **Only `Engine` and `Cli` use the Windows TFM.** `Engine` hosts SE2's own assemblies to read the
@@ -410,6 +411,10 @@ not a rewrite (Design §3.3).
 
 ## 7. Testing
 
+- `Gui.Tests` — the view models, headless. They touch no Avalonia type, so the whole Plan-mode
+  behaviour — load presets, environment effects, ordering, unknown-mass handling — is testable
+  without a display or a game. What they cannot catch is a broken *binding*, which is silent in
+  Avalonia; for that, run the app with a trace listener attached and confirm it logs no warnings.
 - `Model.Tests` — the contract. Reads the committed synthetic fixture and asserts every edge case it
   carries survives: null `thrustClass`, the `-1` no-falloff sentinel, inverted `min > max` ramp
   ordering, null `occupiedCells`, explicit nulls, provenance defaulting, schema-version refusal, and

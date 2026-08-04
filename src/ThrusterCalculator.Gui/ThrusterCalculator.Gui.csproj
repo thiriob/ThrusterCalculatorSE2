@@ -18,7 +18,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <AvaloniaResource Include="Assets\**" />
+    <AvaloniaResource Include="Assets\**" Exclude="Assets\*.json" />
+
+    <!--
+      Sample config so the app runs and demos on a clean clone. The repository ships no real
+      gamedata.json (Technic.md §3.4); a packaged release drops one beside the executable.
+    -->
+    <Content Include="Assets\sample-gamedata.json"
+             Link="Assets\sample-gamedata.json"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,0 +1,84 @@
+{
+  "_comment": [
+    "SAMPLE DATA — NOT REAL SPACE ENGINEERS 2 VALUES.",
+    "Round, invented numbers so the app is demonstrable on a clean clone with no game installed.",
+    "The UI shows a banner whenever this is loaded. Run `tc extract` for real values."
+  ],
+
+  "schemaVersion": "1.0",
+  "generator": { "tool": "tc", "version": "0.0.0-sample", "extractedAt": "2000-01-01T00:00:00Z" },
+  "source": {
+    "gameBuild": "0.0.0-sample",
+    "fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "definitionCounts": { "ThrusterDefinitionObjectBuilder": 4 }
+  },
+
+  "models": {
+    "blockMass": { "kind": "sqrtLog10CellCount", "minBlockMass": 5.0 },
+    "thrustEffectiveness": { "kind": "linearRampAirDensity" },
+    "atmosphereDensity": { "kind": "linearRampAltitude" }
+  },
+
+  "densities": [
+    { "id": "sampleHollow", "name": "Hollow", "massCurveModifier": 7.0 },
+    { "id": "sampleMostlyHollow", "name": "Mostly Hollow", "massCurveModifier": 11.0 }
+  ],
+
+  "resources": [
+    { "id": "samplePower", "name": "Electricity", "flowRateUnits": "Kilowatts", "storageUnits": "KilowattHours", "requiresConveyors": false },
+    { "id": "sampleFuel", "name": "Hydrogen", "flowRateUnits": "LitresPerSecond", "storageUnits": "Litres", "requiresConveyors": true }
+  ],
+
+  "thrustClasses": [
+    { "id": "sampleAtmo", "maxThrustAirDensity": 0.8, "minThrustAirDensity": 0.2, "waterSubmersionTolerance": 1.0, "waterOnly": false },
+    { "id": "sampleIon", "maxThrustAirDensity": 0.2, "minThrustAirDensity": 0.8, "waterSubmersionTolerance": 1.0, "waterOnly": false },
+    { "id": "sampleHydro", "maxThrustAirDensity": 0.0, "minThrustAirDensity": -1.0, "waterSubmersionTolerance": 1.0, "waterOnly": false }
+  ],
+
+  "thrusters": [
+    { "id": "sampleAtmoSmall", "name": "Sample Atmospheric 1 m", "thrustClass": "sampleAtmo", "sizeCm": 100,
+      "thrustNewtons": 40000, "consumedResource": { "resource": "samplePower", "ratePerThrust": 75 },
+      "density": "sampleMostlyHollow", "occupiedCells": 16, "implemented": true },
+    { "id": "sampleAtmoLarge", "name": "Sample Atmospheric 2.5 m", "thrustClass": "sampleAtmo", "sizeCm": 250,
+      "thrustNewtons": 300000, "consumedResource": { "resource": "samplePower", "ratePerThrust": 650 },
+      "density": "sampleMostlyHollow", "occupiedCells": 288, "implemented": true },
+    { "id": "sampleIonLarge", "name": "Sample Ion 5 m", "thrustClass": "sampleIon", "sizeCm": 500,
+      "thrustNewtons": 800000, "consumedResource": { "resource": "samplePower", "ratePerThrust": 1800 },
+      "density": "sampleMostlyHollow", "occupiedCells": 1898, "implemented": true },
+    { "id": "sampleHydroLarge", "name": "Sample Hydrogen 2.5 m", "thrustClass": "sampleHydro", "sizeCm": 250,
+      "thrustNewtons": 1800000, "consumedResource": { "resource": "sampleFuel", "ratePerThrust": 12 },
+      "density": "sampleMostlyHollow", "occupiedCells": 936, "implemented": true },
+    { "id": "sampleUnderwater", "name": "Sample Underwater 2.5 m", "thrustClass": null, "sizeCm": 250,
+      "thrustNewtons": null, "consumedResource": null, "density": "sampleMostlyHollow",
+      "occupiedCells": null, "implemented": false,
+      "provenance": { "thrustNewtons": "unknown", "occupiedCells": "unknown" } }
+  ],
+
+  "containers": [
+    { "id": "sampleContainerSmall", "name": "Sample Container 1.5 m", "maxMassKg": 16800,
+      "density": "sampleHollow", "occupiedCells": 216 },
+    { "id": "sampleContainerLarge", "name": "Sample Container 2.5 m", "maxMassKg": 67200,
+      "density": "sampleHollow", "occupiedCells": 1000 }
+  ],
+
+  "tanks": [
+    { "id": "sampleTankSmall", "name": "Sample Hydrogen Tank 1.5 m", "resource": "sampleFuel",
+      "maxCapacity": 8000, "maxDischargeRate": 2000, "density": "sampleMostlyHollow", "occupiedCells": 216 },
+    { "id": "sampleTankLarge", "name": "Sample Hydrogen Tank 5 m", "resource": "sampleFuel",
+      "maxCapacity": 32000, "maxDischargeRate": 4000, "density": "sampleMostlyHollow", "occupiedCells": 1820 }
+  ],
+
+  "planets": [
+    { "id": "sampleGarden", "name": "Sample Garden World", "milestone": "VS0_0", "surfaceGravity": 9.81,
+      "gravityAffectDistance": 1.5, "atmosphere": { "affectDistance": 1.15, "constantAffectDistance": 1.0 },
+      "provenance": { "surfaceGravity": "assumed" } },
+    { "id": "sampleMoon", "name": "Sample Airless Moon", "milestone": "VS0_0", "surfaceGravity": 2.0,
+      "gravityAffectDistance": 1.5, "atmosphere": null,
+      "provenance": { "surfaceGravity": "assumed" } },
+    { "id": "sampleUnknownGravity", "name": "Sample Uncharted World", "milestone": "VS0_0", "surfaceGravity": null,
+      "gravityAffectDistance": 1.5, "atmosphere": { "affectDistance": 1.15, "constantAffectDistance": 1.08 },
+      "provenance": { "surfaceGravity": "unknown" } }
+  ],
+
+  "warnings": []
+}

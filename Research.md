@@ -532,8 +532,9 @@ So "half-full cargo" is directly computable — no mass curve involved. (The 750
 | OxygenTank150 | 8 000 | 2 000 |
 
 Units come from the referenced resource type (`Hydrogen.def` etc.), so resolve the GUID rather than
-assuming litres or kg. **To convert full-tank capacity into kilograms we still need a mass-per-unit
-for hydrogen** — check `Hydrogen.def` for a density field; if absent, that's another Tier-2 question.
+assuming litres or kg. **Gas is massless** — measured in game by watching a tank fill with the ship
+mass unchanged (Backlog B3) — so a full tank weighs exactly what an empty one does and capacity never
+needs converting to kilograms.
 
 Note tank *block* mass still needs the mass curve; only the *contents* are free.
 
@@ -586,8 +587,7 @@ subtracted) against Hollow (7) and the cache's cell counts:
 
 Two exact matches settle the density. The 7.5 m gap is **not** a density error — the same modifier
 is right for its siblings — but a cell-count one: the cache reports 26,912 cells where the measured
-mass implies ~25,946. Worth chasing separately; possibly overlapping cell groups being
-double-counted in the sum.
+mass implies ~25,946. Deferred with the evidence and leading hypothesis in Backlog B2.
 
 #### Two rules that were tried first, and were wrong
 
@@ -625,8 +625,8 @@ Three VS1_5 planets (MarsLike, Testerran, WaterPlanet) declare no atmosphere at 
 `Templates/Legacy/PlanetWithAtmosphere`, which says **`AffectDistance = 100`** — an atmosphere
 reaching 100 planet radii. That resolution is faithful to the game's own chain, but the number is
 not usable, so it is extracted *and* warned (`implausibleAtmosphere`). Surface density is unaffected,
-which is all v1 uses; only an altitude model would care. Geomeles has no atmosphere anywhere in its
-chain and remains the single assumed case.
+which is all v1 uses; only an altitude model would care. Geomeles has no atmosphere anywhere in its chain; it is now
+extracted as unknown rather than assumed, and deferred until the planet ships (Backlog B1).
 
 ### 4.5 Which planets actually matter
 

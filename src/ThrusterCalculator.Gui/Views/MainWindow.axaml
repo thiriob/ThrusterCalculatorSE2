@@ -2,35 +2,232 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        xmlns:vm="using:ThrusterCalculator.Gui.ViewModels"
+        mc:Ignorable="d" d:DesignWidth="1040" d:DesignHeight="700"
         x:Class="ThrusterCalculator.Gui.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
         Title="ThrusterCalculator SE2"
-        Width="900" Height="600"
-        MinWidth="640" MinHeight="420">
+        Width="1040" Height="720"
+        MinWidth="880" MinHeight="560">
 
-    <!-- Skeleton only. Real layout is sketched in Design.md §5. -->
+    <Window.Styles>
+        <Style Selector="TextBlock.h">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Opacity" Value="0.75" />
+            <Setter Property="Margin" Value="0,12,0,4" />
+        </Style>
+        <Style Selector="TextBlock.dim">
+            <Setter Property="Opacity" Value="0.65" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundListLowBrush}" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="12" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+    </Window.Styles>
+
     <DockPanel>
 
-        <Border DockPanel.Dock="Bottom"
-                Padding="12,8"
-                Background="{DynamicResource SystemControlBackgroundListLowBrush}">
-            <TextBlock Text="No game data loaded — skeleton build"
-                       Opacity="0.7"
-                       FontSize="12" />
+        <!-- Sample data must be unmistakable: the numbers are invented. -->
+        <Border DockPanel.Dock="Top" Padding="12,8" Background="#7A5200"
+                IsVisible="{Binding IsSampleData}">
+            <TextBlock TextWrapping="Wrap" Foreground="White">
+                <Run Text="Sample data — these are not real Space Engineers 2 values." FontWeight="SemiBold" />
+                <Run Text="Run 'tc extract' to generate gamedata.json from your installed game." />
+            </TextBlock>
         </Border>
 
-        <StackPanel VerticalAlignment="Center"
-                    HorizontalAlignment="Center"
-                    Spacing="8">
-            <TextBlock Text="ThrusterCalculator SE2"
-                       FontSize="28"
-                       FontWeight="SemiBold"
-                       HorizontalAlignment="Center" />
-            <TextBlock Text="Skeleton — no functionality yet."
-                       Opacity="0.7"
-                       HorizontalAlignment="Center" />
-        </StackPanel>
+        <Border DockPanel.Dock="Bottom" Padding="12,6"
+                Background="{DynamicResource SystemControlBackgroundListLowBrush}">
+            <TextBlock Classes="dim" Text="{Binding DataStatus}" />
+        </Border>
 
+        <Grid ColumnDefinitions="380,*" Margin="12">
+
+            <!-- ── inputs ─────────────────────────────────────────────── -->
+            <ScrollViewer Grid.Column="0" Margin="0,0,12,0"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+
+                    <TextBlock Classes="h" Text="DEPARTURE" Margin="0,0,0,4" />
+                    <Border Classes="card">
+                        <StackPanel Spacing="8">
+                            <ComboBox ItemsSource="{Binding Planets}"
+                                      SelectedItem="{Binding SelectedPlanet}"
+                                      HorizontalAlignment="Stretch" />
+                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                <TextBlock Grid.Column="0" Text="Gravity" VerticalAlignment="Center" />
+                                <NumericUpDown Grid.Column="1" Margin="8,0"
+                                               Value="{Binding Gravity}"
+                                               Minimum="0" Maximum="100" Increment="0.1"
+                                               FormatString="0.00" />
+                                <TextBlock Grid.Column="2" Text="m/s²" VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Classes="dim" IsVisible="{Binding GravityIsAssumed}"
+                                       TextWrapping="Wrap"
+                                       Text="⚠ Assumed — surface gravity is not in the game's definition files. Edit if you know better." />
+                            <Grid ColumnDefinitions="Auto,*">
+                                <TextBlock Grid.Column="0" Text="Target TWR" VerticalAlignment="Center" />
+                                <NumericUpDown Grid.Column="1" Margin="8,0,0,0"
+                                               Value="{Binding TargetThrustToWeight}"
+                                               Minimum="0.1" Maximum="20" Increment="0.1"
+                                               FormatString="0.0" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Classes="h" Text="SHIP MASS" />
+                    <Border Classes="card">
+                        <StackPanel Spacing="8">
+                            <RadioButton GroupName="mass" Content="I know it"
+                                         IsChecked="{Binding !IsStorageMode}" />
+                            <NumericUpDown Value="{Binding DirectMassTonnes}" Minimum="0"
+                                           Increment="10" FormatString="0.#"
+                                           IsEnabled="{Binding !IsStorageMode}" />
+                            <TextBlock Classes="dim" Text="tonnes, as shown in game" />
+
+                            <RadioButton GroupName="mass" Content="Work it out from storage"
+                                         IsChecked="{Binding IsStorageMode}" Margin="0,8,0,0" />
+                            <StackPanel IsEnabled="{Binding IsStorageMode}" Spacing="6">
+                                <Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Grid.Column="0" Text="Hull" VerticalAlignment="Center" />
+                                    <NumericUpDown Grid.Column="1" Margin="8,0,0,0"
+                                                   Value="{Binding HullMassTonnes}" Minimum="0"
+                                                   Increment="10" FormatString="0.#" />
+                                </Grid>
+
+                                <ItemsControl ItemsSource="{Binding Containers}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:StorageRowViewModel">
+                                            <Grid ColumnDefinitions="*,118" Margin="0,2">
+                                                <StackPanel Grid.Column="0">
+                                                    <TextBlock Text="{Binding Name}" />
+                                                    <TextBlock Classes="dim" Text="{Binding CapacityText}" />
+                                                </StackPanel>
+                                                <NumericUpDown Grid.Column="1" Minimum="0" Maximum="999"
+                                                               Value="{Binding Count}" FormatString="0" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <ItemsControl ItemsSource="{Binding Tanks}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:StorageRowViewModel">
+                                            <Grid ColumnDefinitions="*,118" Margin="0,2">
+                                                <StackPanel Grid.Column="0">
+                                                    <TextBlock Text="{Binding Name}" />
+                                                    <TextBlock Classes="dim" Text="{Binding BlockMassText}" />
+                                                </StackPanel>
+                                                <NumericUpDown Grid.Column="1" Minimum="0" Maximum="999"
+                                                               Value="{Binding Count}" FormatString="0" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock Classes="dim" TextWrapping="Wrap"
+                                           Text="Tanks count their block mass only — gas is massless in game, so a full tank weighs the same as an empty one." />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ── results ────────────────────────────────────────────── -->
+            <DockPanel Grid.Column="1">
+
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Classes="h" Text="LOAD" Margin="0,0,0,4"
+                               IsVisible="{Binding IsStorageMode}" />
+                    <Border Classes="card">
+                        <StackPanel Spacing="8">
+                            <StackPanel Spacing="8" IsVisible="{Binding IsStorageMode}">
+                            <ListBox ItemsSource="{Binding PresetNames}"
+                                     SelectedIndex="{Binding SelectedPresetIndex}"
+                                     HorizontalAlignment="Left">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                            </ListBox>
+
+                            <!-- All three shown at once: the failure this app exists to prevent is
+                                 the ship that lifts empty and strands full. -->
+                            <ItemsControl ItemsSource="{Binding Loads}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="18" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:LoadSummary">
+                                        <StackPanel>
+                                            <TextBlock Classes="dim" Text="{Binding Name}" />
+                                            <TextBlock Text="{Binding MassText}" FontSize="16" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            </StackPanel>
+
+                            <TextBlock>
+                                <Run Text="Needs" />
+                                <Run Text="{Binding RequirementText}" FontWeight="SemiBold" />
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Classes="h" Text="CONFIGURATIONS" />
+                </StackPanel>
+
+                <TextBlock DockPanel.Dock="Bottom" Classes="dim" Margin="0,8,0,0"
+                           Text="{Binding Assumption}" />
+
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Results}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ThrusterResultViewModel">
+                                <Border Classes="card" Margin="0,0,0,6">
+                                    <!-- Single column on purpose. A right-docked figures panel was
+                                         tried twice and rendered off-screen inside the scroller;
+                                         inline also reads better, since the count is the answer. -->
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
+                                                   TextWrapping="Wrap" />
+
+                                        <StackPanel Orientation="Horizontal" Spacing="14"
+                                                    IsVisible="{Binding IsFeasible}">
+                                            <TextBlock Text="{Binding CountText}" FontSize="19" />
+                                            <TextBlock Text="{Binding AddedMassText}" FontSize="15"
+                                                       VerticalAlignment="Center" Opacity="0.85" />
+                                            <TextBlock Text="{Binding RatioText}" FontSize="15"
+                                                       VerticalAlignment="Center" Opacity="0.85" />
+                                            <TextBlock Classes="dim" Text="{Binding ProvenanceText}"
+                                                       VerticalAlignment="Center"
+                                                       IsVisible="{Binding IsUncertain}" />
+                                        </StackPanel>
+
+                                        <TextBlock Classes="dim" Text="{Binding StatusText}"
+                                                   IsVisible="{Binding !IsFeasible}" />
+
+                                        <StackPanel Orientation="Horizontal" Spacing="14"
+                                                    IsVisible="{Binding IsFeasible}">
+                                            <TextBlock Classes="dim" Text="{Binding RangeText}" />
+                                            <TextBlock Classes="dim" Text="{Binding HeadroomText}" />
+                                            <TextBlock Classes="dim" Text="{Binding DrawText}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </Grid>
     </DockPanel>
-
 </Window>

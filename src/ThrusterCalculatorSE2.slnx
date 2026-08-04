@@ -18,4 +18,5 @@
   <Project Path="ThrusterCalculator.Extraction.Tests/ThrusterCalculator.Extraction.Tests.csproj" />
   <Project Path="ThrusterCalculator.Cli/ThrusterCalculator.Cli.csproj" />
   <Project Path="ThrusterCalculator.Gui/ThrusterCalculator.Gui.csproj" />
+  <Project Path="ThrusterCalculator.Gui.Tests/ThrusterCalculator.Gui.Tests.csproj" />
 </Solution>
