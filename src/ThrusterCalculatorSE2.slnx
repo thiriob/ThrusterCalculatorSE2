@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/docs/">
+    <File Path="../README.md" />
+    <File Path="../Research.md" />
+    <File Path="../Design.md" />
+    <File Path="../Technic.md" />
+    <File Path="../Schema.md" />
+  </Folder>
+  <Folder Name="/fixtures/">
+    <File Path="../tests/fixtures/synthetic-gamedata.json" />
+  </Folder>
+  <Project Path="ThrusterCalculator.Model/ThrusterCalculator.Model.csproj" />
+  <Project Path="ThrusterCalculator.Core/ThrusterCalculator.Core.csproj" />
+  <Project Path="ThrusterCalculator.Core.Tests/ThrusterCalculator.Core.Tests.csproj" />
+  <Project Path="ThrusterCalculator.Extraction/ThrusterCalculator.Extraction.csproj" />
+  <Project Path="ThrusterCalculator.Extraction.Tests/ThrusterCalculator.Extraction.Tests.csproj" />
+  <Project Path="ThrusterCalculator.Cli/ThrusterCalculator.Cli.csproj" />
+  <Project Path="ThrusterCalculator.Gui/ThrusterCalculator.Gui.csproj" />
+</Solution>

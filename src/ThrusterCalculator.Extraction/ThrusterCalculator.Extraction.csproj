@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The producer's engine room: SE2 install discovery, walking Content\**\*.def,
+    building the GUID index, resolving the graph, emitting Model objects.
+
+    Platform-neutral despite being Windows-oriented in practice. It touches the filesystem
+    and knows Windows-shaped default paths (Steam's libraryfolders.vdf), but uses no
+    Windows-only API — the mass formula is transcribed, so no game assemblies are loaded
+    (Technic.md §10.2.1). Keeping it net9.0 also lets Extraction.Tests reference it.
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TcTargetFramework)</TargetFramework>
+    <RootNamespace>ThrusterCalculator.Extraction</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThrusterCalculator.Model\ThrusterCalculator.Model.csproj" />
+  </ItemGroup>
+
+</Project>

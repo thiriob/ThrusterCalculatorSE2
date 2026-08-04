@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="ThrusterCalculator.Gui.Views.MainWindow"
+        Title="ThrusterCalculator SE2"
+        Width="900" Height="600"
+        MinWidth="640" MinHeight="420">
+
+    <!-- Skeleton only. Real layout is sketched in Design.md §5. -->
+    <DockPanel>
+
+        <Border DockPanel.Dock="Bottom"
+                Padding="12,8"
+                Background="{DynamicResource SystemControlBackgroundListLowBrush}">
+            <TextBlock Text="No game data loaded — skeleton build"
+                       Opacity="0.7"
+                       FontSize="12" />
+        </Border>
+
+        <StackPanel VerticalAlignment="Center"
+                    HorizontalAlignment="Center"
+                    Spacing="8">
+            <TextBlock Text="ThrusterCalculator SE2"
+                       FontSize="28"
+                       FontWeight="SemiBold"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="Skeleton — no functionality yet."
+                       Opacity="0.7"
+                       HorizontalAlignment="Center" />
+        </StackPanel>
+
+    </DockPanel>
+
+</Window>

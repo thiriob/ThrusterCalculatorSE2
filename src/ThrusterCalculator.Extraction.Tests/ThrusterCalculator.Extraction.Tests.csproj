@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Parser tests against SYNTHETIC .def fixtures (Technic.md §7.1) — hand-written JSON in
+    the real envelope shape, our own GUIDs and numbers. Keen's actual files are never
+    committed; tests that need them skip when absent.
+
+    Runs green on a clean clone with no Space Engineers 2 installed.
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TcTargetFramework)</TargetFramework>
+    <RootNamespace>ThrusterCalculator.Extraction.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThrusterCalculator.Extraction\ThrusterCalculator.Extraction.csproj" />
+  </ItemGroup>
+
+</Project>

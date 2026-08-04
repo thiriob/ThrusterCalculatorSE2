@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    THE CONSUMER (Technic.md §1). Reads gamedata.json and calculates. Nothing else.
+
+    Note what is absent: no reference to Extraction, and none to Cli. Under the
+    producer/consumer split the GUI cannot see producer types at all — the decoupling is
+    structural, not a convention (Technic.md §2). When the Rebuild affordance is built
+    (Design.md §4.5.1) it will spawn tc.exe as a child process, and this csproj will gain a
+    ProjectReference to Cli with ReferenceOutputAssembly="false" purely for build ordering.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>$(TcTargetFramework)</TargetFramework>
+    <RootNamespace>ThrusterCalculator.Gui</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="$(AvaloniaVersion)" />
+    <!--
+      Avalonia 12's replacement for the old Avalonia.Diagnostics package (which stops at
+      11.x); versioned independently of AvaloniaVersion. Debug-only, as the dev tools have
+      no business in a release build.
+    -->
+    <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3">
+      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
+      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThrusterCalculator.Core\ThrusterCalculator.Core.csproj" />
+    <ProjectReference Include="..\ThrusterCalculator.Model\ThrusterCalculator.Model.csproj" />
+  </ItemGroup>
+
+</Project>

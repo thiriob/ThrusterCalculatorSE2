@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Domain types and math (Technic.md §5): the sizing solver, the block-mass formula,
+    thrust effectiveness, provenance.
+
+    Depends on Model and nothing else. No Avalonia, no SE2, no filesystem, no Windows API.
+    Must remain WASM-compatible by construction (Technic.md §9) — if something here needs
+    System.IO, it belongs in the producer instead.
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TcTargetFramework)</TargetFramework>
+    <RootNamespace>ThrusterCalculator.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThrusterCalculator.Model\ThrusterCalculator.Model.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The math (Technic.md §5). Pure functions, no I/O, fast.
+    Runs green on a clean clone with no Space Engineers 2 installed — that is a hard
+    requirement, not an aspiration (Technic.md §7).
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TcTargetFramework)</TargetFramework>
+    <RootNamespace>ThrusterCalculator.Core.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The synthetic config the consumer-side tests run against (Technic.md §7.1).
+      Hand-authored, invented numbers, deliberately NOT named gamedata.json so the
+      .gitignore rules for real extracted data cannot swallow it.
+    -->
+    <Content Include="..\..\tests\fixtures\synthetic-gamedata.json"
+             Link="fixtures\synthetic-gamedata.json"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThrusterCalculator.Core\ThrusterCalculator.Core.csproj" />
+  </ItemGroup>
+
+</Project>

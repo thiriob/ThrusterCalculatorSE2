@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    tc.exe — THE PRODUCER (Technic.md §1).
+
+    Commands planned: dump-schemas, extract, verify. This is the only program that needs
+    a Space Engineers 2 installation; the GUI and any web frontend read its JSON output
+    and nothing else.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>$(TcTargetFramework)</TargetFramework>
+    <AssemblyName>tc</AssemblyName>
+    <RootNamespace>ThrusterCalculator.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThrusterCalculator.Model\ThrusterCalculator.Model.csproj" />
+    <ProjectReference Include="..\ThrusterCalculator.Extraction\ThrusterCalculator.Extraction.csproj" />
+  </ItemGroup>
+
+</Project>

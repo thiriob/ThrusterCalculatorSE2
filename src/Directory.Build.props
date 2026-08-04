@@ -1,0 +1,35 @@
+<Project>
+
+  <!--
+    Single flip point for target frameworks.
+
+    Pinned to net9.0 to match Space Engineers 2, NOT because net9 is current. SE2's
+    SpaceEngineers2.runtimeconfig.json declares:
+
+        "tfm": "net9.0", frameworks: Microsoft.NETCore.App 9.0.0,
+                                     Microsoft.WindowsDesktop.App 9.0.0
+
+    Matching the runtime the game was built and tested against removes a variable.
+
+    Everything is platform-neutral net9.0. That is a consequence of Technic.md §10.2.1:
+    the mass formula was decompiled and transcribed, so nothing loads SE2's assemblies and
+    no project needs a Windows-specific TFM. TcWindowsTargetFramework is defined but unused
+    — it is reserved for ThrusterCalculator.Engine, which is deliberately not created yet
+    (Technic.md §2.3) and would need net9.0-windows plus <UseWPF>true</UseWPF>.
+  -->
+  <PropertyGroup>
+    <TcTargetFramework>net9.0</TcTargetFramework>
+    <TcWindowsTargetFramework>net9.0-windows</TcWindowsTargetFramework>
+    <AvaloniaVersion>12.1.1</AvaloniaVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The gamedata.json contract (Schema.md). Plain DTOs + System.Text.Json config.
+    No logic, no I/O, no dependencies.
+
+    Its own project rather than part of Core because BOTH sides of the producer/consumer
+    split depend on it and neither may depend on the other (Technic.md §2.1).
+    Must stay platform-neutral to keep the web target open (Technic.md §9).
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TcTargetFramework)</TargetFramework>
+    <RootNamespace>ThrusterCalculator.Model</RootNamespace>
+  </PropertyGroup>
+
+</Project>
