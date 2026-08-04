@@ -63,30 +63,29 @@ ThrusterCalculatorSE2/
     ThrusterCalculator.Core.Tests/       net9.0  green on a clean clone, no SE2
 
     ── producer side (needs an SE2 install at runtime) ──
-    ThrusterCalculator.Extraction/       net9.0  .def scan → Model
-    ThrusterCalculator.Extraction.Tests/ net9.0  synthetic .def fixtures (§7.1)
-    ThrusterCalculator.Cli/              net9.0  tc.exe — the producer
+    ThrusterCalculator.Extraction/       net9.0          .def scan → Model
+    ThrusterCalculator.Extraction.Tests/ net9.0          synthetic .def fixtures (§7.1)
+    ThrusterCalculator.Engine/           net9.0-windows  hosts SE2 assemblies; reads contentcache.vrb
+    ThrusterCalculator.Cli/              net9.0-windows  tc.exe — the producer
 
     ── frontend ──
     ThrusterCalculator.Gui/              net9.0  Avalonia. Model + Core only.
-
-    (ThrusterCalculator.Engine/ — net9.0-windows, deliberately NOT created. §2.3)
 ```
 
-**Every project is plain `net9.0`, with no Windows-specific TFM anywhere.** That falls out of
-§10.2.1: because the mass formula was transcribed rather than invoked, *nothing loads SE2's
-assemblies*, so nothing needs `net9.0-windows` or `UseWPF`. The producer still expects a Windows
-machine in practice — that's where the game installs — but it uses no Windows-only API, only
-Windows-shaped default paths.
+**Only `Engine` and `Cli` use the Windows TFM.** `Engine` hosts SE2's own assemblies to read the
+content cache (§10.2.0) and therefore needs `net9.0-windows` plus `UseWPF`; `Cli` inherits that by
+referencing it. Everything else — `Model`, `Core`, `Extraction`, `Gui` and all test projects — stays
+plain `net9.0`.
 
-Two things this buys, both worth protecting:
+`Extraction` in particular is deliberately kept platform-neutral and engine-free: it talks to
+`IOccupancySource`, so it remains testable without a game install and the engine is an enrichment
+rather than a dependency.
 
-- `Extraction.Tests` (net9.0) can reference `Extraction`. Under the earlier plan it couldn't — a
-  net9.0 project cannot reference a net9.0-windows one.
-- The consumer half stays trivially WASM-eligible (§9) rather than needing to be untangled later.
+Two things that split protects:
 
-`TcWindowsTargetFramework` is still defined in `Directory.Build.props` but unused, reserved for
-`Engine` if it is ever created.
+- `Extraction.Tests` (net9.0) can reference `Extraction`, which a net9.0 project could not do if
+  `Extraction` were Windows-targeted.
+- The consumer half stays trivially WASM-eligible (§9) rather than needing untangling later.
 
 Reference graph — note the **absence** of any arrow from `Gui` into the producer side:
 
@@ -121,7 +120,13 @@ asking the producer.
 `Extraction` does install discovery (`libraryfolders.vdf`, app `1133870`, Research §6), walks
 `Content\`, builds the GUID index, resolves the graph, and emits `Model` objects.
 
-`Engine` is the quarantined optional piece (§10). **Don't create it until the spike justifies it.**
+`Engine` is the quarantined piece (§10.2.0): it hosts SE2's own assemblies to read block occupancy
+out of `contentcache.vrb`. Copied from `../BlueprintHelperSE2`, whose comments carry the hard-won
+details — which assemblies must *not* be loaded, and why the allocator is thread-local.
+
+**`Extraction` never references it.** They meet at `IOccupancySource`, so a failure to host the game
+degrades to the built-in table instead of failing the run, and extraction stays testable with no
+game present.
 
 `Cli` (`tc.exe`) is the producer host and the only thing that needs to exist for a rebuild.
 
@@ -602,6 +607,42 @@ Two consequences:
    first appeared.
 
 Inputs are few and visible: `RelativeBlockSize`, `MassCurveModifier`, `MinBlockMass`.
+
+### 10.2.0 Revisited — engine hosting is now worth doing, for a different reason
+
+§10.2.1 below concluded that transcribing the mass formula removed any need to host game assemblies.
+That conclusion was right about the *formula* and is unchanged. But a later spike (Research §4.0.0)
+showed engine hosting buys something the formula does not: **`contentcache.vrb` yields the game's
+precomputed occupancy for 1,454 blocks**, verified to agree exactly with our recovered values.
+
+That replaces `OccupiedCellsTable` — the project's one hand-maintained input — with extracted data,
+and extends coverage from 16 blocks to every block. `../BlueprintHelperSE2` already has the working
+stack (`Se2Runtime`, `VrbSerializer`, `ContentCache`) to copy, per §11's copy-don't-share decision.
+
+Scope of the change:
+
+- **Create `ThrusterCalculator.Engine`** (net9.0-windows, `UseWPF`), the reserved slot in §2.3.
+- `Cli` references it and moves to `net9.0-windows`. The producer already requires a game install, so
+  this costs nothing it was not already paying.
+- **`Model`, `Core` and `Gui` are untouched** and stay platform-neutral. The consumer still needs
+  nothing but JSON, and the §4 rule that game assemblies never enter the Avalonia process still
+  holds — the CLI is not an Avalonia app.
+- Occupancy stays `Derived` in the config only until this lands; afterwards it is `Measured`.
+
+**Implemented.** `tc extract` now reports `Occupancy source: content-cache`, and all 46 extracted
+blocks carry `measured` occupancy where 16 previously carried `derived`.
+
+Two things worth recording from building it:
+
+- **The occupancy bounding box is not the cell count.** The first implementation read
+  `Occupancy.Bounds`, which is right only for blocks that are a single box. The 5 m hydrogen tank
+  occupies 1,820 cells inside a 20×10×10 = 2,000 box — a 10% mass overstatement. `ComputeMassAndHP`
+  sums `CellGroups`, so we must too. This was caught purely because the recovered table disagreed;
+  with no second source it would have shipped.
+- **The table stays, as a fallback and a cross-check.** `--no-engine` forces it (16 of 46 blocks),
+  which is how the two sources get compared. Three of its entries were corrected from the cache by
+  1–2 cells, all on the largest blocks, where a mass published to the whole kilogram cannot resolve
+  individual cells.
 
 ### 10.2.1 RESOLVED — we transcribe, and engine hosting is not needed
 

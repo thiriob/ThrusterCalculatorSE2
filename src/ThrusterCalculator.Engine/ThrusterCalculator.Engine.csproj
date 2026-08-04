@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The ONLY project allowed to load Space Engineers 2's own assemblies.
+
+    It exists for one reason: contentcache.vrb carries the game's precomputed block occupancy for
+    ~1,450 blocks (Research.md §4.0.0), which is otherwise unobtainable and would have to be
+    hand-maintained per block.
+
+    Producer-side only. Nothing here is visible to Model, Core or the GUI — the consumer still
+    needs nothing but gamedata.json.
+  -->
+  <PropertyGroup>
+    <TargetFramework>$(TcWindowsTargetFramework)</TargetFramework>
+    <RootNamespace>ThrusterCalculator.Engine</RootNamespace>
+    <!--
+      SpaceEngineers2.runtimeconfig.json requires Microsoft.WindowsDesktop.App, and the game
+      assemblies bind against it once loaded in-process. UseWPF pulls that shared framework in;
+      without it the engine types fail to resolve at runtime.
+    -->
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- UseWPF swaps in the WPF implicit-using set, which drops these. Put them back. -->
+    <Using Include="System.IO" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Collections.Generic" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ThrusterCalculator.Extraction\ThrusterCalculator.Extraction.csproj" />
+  </ItemGroup>
+
+</Project>

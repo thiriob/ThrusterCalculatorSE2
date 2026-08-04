@@ -23,9 +23,9 @@ public class BlockMassTests
     [InlineData("HydrogenThruster250", 936, 1005)]
     [InlineData("AtmosphericThruster500", 1852, 1552)]
     [InlineData("IonThruster500", 1898, 1576)]
-    [InlineData("IonThruster750", 17541, 6188)]
-    [InlineData("HydrogenThruster750", 22031, 7096)]
-    [InlineData("AtmosphericThruster1000", 28878, 8343)]
+    [InlineData("IonThruster750", 17543, 6188)]
+    [InlineData("HydrogenThruster750", 22030, 7096)]
+    [InlineData("AtmosphericThruster1000", 28876, 8343)]
     public void ReproducesRealThrusterMasses(string name, int occupiedCells, double expectedKg)
     {
         var mass = BlockMass.SqrtLog10CellCount(
@@ -82,7 +82,7 @@ public class BlockMassTests
     public void IncreasesMonotonicallyWithSize()
     {
         var previous = double.NegativeInfinity;
-        foreach (var cells in new[] { 2, 8, 16, 144, 288, 936, 28878 })
+        foreach (var cells in new[] { 2, 8, 16, 144, 288, 936, 28876 })
         {
             var mass = BlockMass.SqrtLog10CellCount(cells, TestData.MostlyHollow, TestData.MinBlockMass);
             Assert.True(mass > previous, $"mass should increase with cells; broke at {cells}");

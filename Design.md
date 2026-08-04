@@ -68,6 +68,13 @@ Research §4.3 confirms Path B is mostly free: `CargoContainer150/250/750` carry
 So Path B shows: **container/tank contents = `Measured`, block masses = `Assumed`**, plus a hull mass
 the user still enters. P2 makes that honest rather than confusing.
 
+### 3.1.1 Which planets to show
+
+Only **Verdure** and **Kemik** are reachable in the current game build, though ten ship as data.
+Per §4.4 the others are still listed rather than hidden — "does this exist yet?" is a real question
+during alpha — but the playable two should be **ordered first and used as the default selection**,
+so the common case needs no scrolling.
+
 ### 3.2 Load presets
 
 **Tanks are always full. Cargo varies.** Fuel is the thing you can't choose to leave behind, so

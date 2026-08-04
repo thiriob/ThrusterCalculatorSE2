@@ -1,3 +1,4 @@
+using ThrusterCalculator.Engine;
 using ThrusterCalculator.Extraction;
 using ThrusterCalculator.Model;
 
@@ -18,8 +19,14 @@ internal static class ExtractCommand
         var definitions = DefinitionScanner.Scan(installation, Progress());
         Console.Error.WriteLine();
 
+        var (occupancy, inheritance) = OpenEngineSources(
+            installation, CommandContext.Flag(args, "--no-engine"));
+
         var fingerprint = ContentFingerprint.Compute(installation.ContentPath);
-        var data = new GameDataExtractor(definitions).Extract(ToolVersion, fingerprint);
+        var extractor = new GameDataExtractor(definitions, occupancy, inheritance);
+        var data = extractor.Extract(ToolVersion, fingerprint);
+        Console.Error.WriteLine($"Occupancy source:   {extractor.OccupancySourceName}");
+        Console.Error.WriteLine($"Inheritance source: {extractor.InheritanceSourceName}");
 
         using (var stream = File.Create(outPath))
         {
@@ -32,6 +39,50 @@ internal static class ExtractCommand
 
     private static string ToolVersion =>
         typeof(ExtractCommand).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+
+    /// <summary>
+    /// Prefers the game's own precomputed occupancy, falling back to the recovered table.
+    /// </summary>
+    /// <remarks>
+    /// Hosting the game's assemblies is the fragile part of this tool, so a failure here degrades
+    /// to the built-in table rather than aborting: the table covers fewer blocks, but the run still
+    /// produces a usable config (Design.md P5). <c>--no-engine</c> forces that path, which is also
+    /// how the two sources get compared.
+    /// </remarks>
+    private static (IOccupancySource Occupancy, IDefinitionInheritance Inheritance)
+        OpenEngineSources(Se2Installation installation, bool noEngine)
+    {
+        var table = new TableOccupancySource();
+
+        if (noEngine)
+        {
+            Console.Error.WriteLine("Engine disabled (--no-engine).");
+            return (table, new NoDefinitionInheritance());
+        }
+
+        try
+        {
+            var occupancy = ContentCacheOccupancySource.Open(
+                installation.RootPath, installation.ContentPath, table);
+            Console.Error.WriteLine($"Content cache:  {occupancy.Coverage:N0} asset entries.");
+
+            // Both live behind the same runtime, so one attach serves both.
+            var inheritance = DefinitionSetInheritance.Open(
+                Se2Runtime.Attach(installation.RootPath), installation.ContentPath);
+            Console.Error.WriteLine(
+                $"Definition sets: {inheritance.Count:N0} of {inheritance.TotalDefinitions:N0} "
+                + "definitions declare a base.");
+
+            return (occupancy, inheritance);
+        }
+        catch (Exception ex) when (ex is Se2EngineException or BadImageFormatException
+                                      or FileLoadException or TypeLoadException)
+        {
+            Console.Error.WriteLine($"Could not host the game's assemblies ({ex.Message}).");
+            Console.Error.WriteLine("Falling back to the recovered table; inheritance unresolved.");
+            return (table, new NoDefinitionInheritance());
+        }
+    }
 
     private static IProgress<ScanProgress> Progress() =>
         new Progress<ScanProgress>(p =>

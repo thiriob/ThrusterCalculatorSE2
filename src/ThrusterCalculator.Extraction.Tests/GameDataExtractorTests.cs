@@ -122,31 +122,65 @@ public class GameDataExtractorTests
     }
 }
 
-public class TemplateInheritanceTests
+/// <summary>Inheritance resolved through the game's own <c>BaseGuid</c> parent pointer.</summary>
+internal sealed class FakeInheritance(params (string Child, string Parent)[] links) : IDefinitionInheritance
 {
+    private readonly Dictionary<string, string> _links =
+        links.ToDictionary(l => l.Child, l => l.Parent, StringComparer.OrdinalIgnoreCase);
+
+    public string Name => "fake";
+
+    public string? BaseOf(string guid) => _links.TryGetValue(guid, out var p) ? p : null;
+}
+
+public class DefinitionInheritanceTests
+{
+    private const string NoClassThruster = "aaaaaaaa-0000-0000-0000-000000000002";
+    private const string TemplateThruster = "aaaaaaaa-0000-0000-0000-000000000004";
+
+    private static GameData ExtractWith(IDefinitionInheritance inheritance) =>
+        new GameDataExtractor(Fixtures.Scan(), null, inheritance).Extract("0.0.0-test", "sha256:test");
+
     [Fact]
     public void ConcreteBlockInheritsAFieldItDoesNotRestate()
     {
-        // The fixture's second thruster omits ThrustClass, exactly as hydrogen thrusters do in the
-        // real data, and must pick it up from the template.
-        var set = Fixtures.Scan();
-        var index = BlockCompositionIndex.Build(set);
-        var noClass = set.Resolve("aaaaaaaa-0000-0000-0000-000000000002")!;
+        // Exactly the real situation: hydrogen thrusters omit ThrustClass and pick it up from the
+        // base definition their BaseGuid points at.
+        var data = ExtractWith(new FakeInheritance((NoClassThruster, TemplateThruster)));
 
-        Assert.Null(noClass.GetString("ThrustClass"));
+        var thruster = data.Thrusters.Single(t => t.Id == "testThrusterNoClass");
 
-        var inherited = index.InheritedString(noClass, Fixtures.ThrusterType, "ThrustClass");
-
-        Assert.Equal("TestHydrogen", inherited);
+        Assert.Equal("TestHydrogen", thruster.ThrustClass);
     }
 
     [Fact]
-    public void InheritanceIsNullWhenNothingMatches()
+    public void WithoutInheritanceTheFieldStaysUnresolved()
     {
-        var set = Fixtures.Scan();
-        var index = BlockCompositionIndex.Build(set);
-        var thruster = set.Resolve("aaaaaaaa-0000-0000-0000-000000000001")!;
+        // The honest default. An earlier version guessed the parent from component-slot overlap and
+        // silently produced wrong densities; unresolved-and-warned is the better failure.
+        var data = ExtractWith(new NoDefinitionInheritance());
 
-        Assert.Null(index.InheritedString(thruster, Fixtures.ThrusterType, "NoSuchField"));
+        var thruster = data.Thrusters.Single(t => t.Id == "testThrusterNoClass");
+
+        Assert.Null(thruster.ThrustClass);
+        Assert.Contains(data.Warnings, w => w.Code == "unresolvedThrustClass");
+    }
+
+    [Fact]
+    public void ChainTerminatesRatherThanLoopingForever()
+    {
+        // A cycle in the data must not hang extraction.
+        var data = ExtractWith(new FakeInheritance(
+            (NoClassThruster, TemplateThruster), (TemplateThruster, NoClassThruster)));
+
+        Assert.NotEmpty(data.Thrusters);
+    }
+
+    [Fact]
+    public void SourceNameIsRecorded()
+    {
+        var extractor = new GameDataExtractor(Fixtures.Scan(), null, new NoDefinitionInheritance());
+
+        Assert.Equal("none", extractor.InheritanceSourceName);
     }
 }

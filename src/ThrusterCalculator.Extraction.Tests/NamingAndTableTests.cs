@@ -45,7 +45,7 @@ public class OccupiedCellsTableTests
     [InlineData("AtmosphericThruster100", 16)]
     [InlineData("AtmosphericThruster250", 288)]
     [InlineData("HydrogenThruster50", 8)]
-    [InlineData("AtmosphericThruster1000", 28878)]
+    [InlineData("AtmosphericThruster1000", 28876)]
     public void KnownBlocksHaveTheirRecoveredCellCount(string block, int expected) =>
         Assert.Equal(expected, OccupiedCellsTable.For(block));
 
@@ -57,7 +57,25 @@ public class OccupiedCellsTableTests
     }
 
     [Fact]
-    public void CoversEveryShippedThruster() => Assert.Equal(12, OccupiedCellsTable.KnownBlocks.Count);
+    public void CoversEveryShippedThrusterAndTank() =>
+        Assert.Equal(16, OccupiedCellsTable.KnownBlocks.Count);
+
+    [Theory]
+    [InlineData("HydrogenTank150", 216, 11, 382.40)]
+    [InlineData("HydrogenTank500", 1820, 11, 1534.87)]
+    [InlineData("HydrogenTank1250", 36244, 11, 9552.79)]
+    public void TankCellCountsReproduceTheirPublishedMass(
+        string block, int expectedCells, double modifier, double expectedMass)
+    {
+        // Tank reference masses are published to two decimals, so this pins the values far more
+        // tightly than a whole-kilogram figure would.
+        Assert.Equal(expectedCells, OccupiedCellsTable.For(block));
+
+        var computed = modifier * Math.Sqrt(expectedCells) * Math.Log10(expectedCells) + 5.0;
+
+        Assert.True(Math.Abs(computed - expectedMass) < 0.01,
+            $"{block}: V={expectedCells} gives {computed:F2} kg, expected {expectedMass:F2}");
+    }
 
     [Fact]
     public void EveryEntryReproducesItsInGameMass()

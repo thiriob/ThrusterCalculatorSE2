@@ -16,10 +16,21 @@ namespace ThrusterCalculator.Extraction;
 /// would not produce twelve integers by chance.
 /// </para>
 /// <para>
-/// <b>This is the only hand-maintained input in an otherwise fully extracted pipeline.</b> It goes
-/// stale only if Keen changes a block's <em>collision mesh</em> — far rarer than a stat retune,
-/// since the modifier and floor still track automatically. And a stale entry announces itself:
-/// computed mass stops matching what the game displays.
+/// <b>No longer the primary source.</b> <c>ContentCacheOccupancySource</c> reads these counts
+/// straight from the game's own generated data, covering ~1,450 blocks against the 16 here. This
+/// table is the fallback for when the game's assemblies cannot be hosted.
+/// </para>
+/// <para>
+/// It also served as the independent check that caught a real bug: the first cache implementation
+/// read the occupancy <em>bounding box</em> rather than summing its cell groups, which overstated
+/// the 5 m hydrogen tank by 10% (2,000 cells against 1,820). The two derivations disagreeing is
+/// what exposed it.
+/// </para>
+/// <para>
+/// Three entries were corrected from the cache — Ion 7.5 m, Hydrogen 7.5 m and Atmospheric 10 m
+/// differed by 1–2 cells. All three are the largest blocks, where solving from a mass published to
+/// the whole kilogram simply cannot resolve individual cells; both values round to the same
+/// displayed mass.
 /// </para>
 /// </remarks>
 public static class OccupiedCellsTable
@@ -38,9 +49,17 @@ public static class OccupiedCellsTable
         ["HydrogenThruster250"] = 936,       // 1 005 kg
         ["AtmosphericThruster500"] = 1852,   // 1 552 kg
         ["IonThruster500"] = 1898,           // 1 576 kg
-        ["IonThruster750"] = 17541,          // 6 188 kg
-        ["HydrogenThruster750"] = 22031,     // 7 096 kg
-        ["AtmosphericThruster1000"] = 28878, // 8 343 kg
+        ["IonThruster750"] = 17543,          // 6 188 kg
+        ["HydrogenThruster750"] = 22030,     // 7 096 kg
+        ["AtmosphericThruster1000"] = 28876, // 8 343 kg
+
+        // Tanks — density "Mostly Hollow" (11), confirmed from the extracted config rather than
+        // assumed. Reference masses are published to two decimals, and each V below reproduces its
+        // mass to that precision, which is a tighter fit than the thrusters above.
+        ["HydrogenTank150"] = 216,           //   382.40 kg   (= 6³, a full 1.5 m cube)
+        ["OxygenTank150"] = 216,             //   382.40 kg   same shell as the hydrogen 1.5 m
+        ["HydrogenTank500"] = 1820,          // 1 534.87 kg
+        ["HydrogenTank1250"] = 36244,        // 9 552.79 kg
     };
 
     /// <summary>Blocks with a known cell count.</summary>

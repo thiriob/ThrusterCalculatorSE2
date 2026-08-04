@@ -9,14 +9,28 @@
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>$(TcTargetFramework)</TargetFramework>
+    <!--
+      Windows TFM because it references Engine, which hosts the game's own assemblies
+      (Technic.md §10.2.0). The producer already requires a local install, so this costs
+      nothing it was not already paying. Model, Core and Gui stay platform-neutral.
+    -->
+    <TargetFramework>$(TcWindowsTargetFramework)</TargetFramework>
+    <UseWPF>true</UseWPF>
     <AssemblyName>tc</AssemblyName>
     <RootNamespace>ThrusterCalculator.Cli</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- UseWPF swaps in the WPF implicit-using set, which drops these. -->
+    <Using Include="System.IO" />
+    <Using Include="System.Linq" />
+    <Using Include="System.Collections.Generic" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\ThrusterCalculator.Model\ThrusterCalculator.Model.csproj" />
     <ProjectReference Include="..\ThrusterCalculator.Extraction\ThrusterCalculator.Extraction.csproj" />
+    <ProjectReference Include="..\ThrusterCalculator.Engine\ThrusterCalculator.Engine.csproj" />
   </ItemGroup>
 
 </Project>

@@ -26,10 +26,9 @@ public sealed record BlockComposition
     /// The composite's component slot GUIDs, as an order-independent set.
     /// </summary>
     /// <remarks>
-    /// Identifies which family of block this is. A concrete block and the template it derives from
-    /// carry the same slots — in a different order, hence a set — while a different family differs.
-    /// That is the link used to recover values a concrete definition inherits rather than restates
-    /// (see <see cref="BlockCompositionIndex.InheritedFrom"/>).
+    /// Descriptive only. It was once used to guess a block's template by slot overlap; that guess
+    /// produced silently wrong densities and was replaced by the game's own <c>BaseGuid</c> pointer
+    /// (see <see cref="IDefinitionInheritance"/>).
     /// </remarks>
     public required IReadOnlySet<string> SlotSignature { get; init; }
 
@@ -148,79 +147,6 @@ public sealed class BlockCompositionIndex
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// Template composites of the same block family as <paramref name="anchor"/>'s block.
-    /// </summary>
-    /// <remarks>
-    /// Recovers values a concrete definition inherits instead of restating. Hydrogen thrusters, for
-    /// instance, omit <c>ThrustClass</c> entirely, yet the engine looks it up with a direct indexer
-    /// — so the value must exist, and it comes from the template.
-    /// <para>
-    /// Matching is by component slot signature, not by name or folder: a template's slots are a
-    /// <em>subset</em> of those of every block built from it. Subset rather than equality because
-    /// concrete blocks add components of their own — the 5 m and 10 m atmospheric thrusters carry
-    /// extras the 2.5 m does not, and exact matching silently lost their density.
-    /// </para>
-    /// <para>
-    /// A loose match is made safe by <see cref="InheritedString"/> requiring unanimity: if several
-    /// templates match and disagree, nothing is returned rather than one being picked arbitrarily.
-    /// </para>
-    /// </remarks>
-    public IReadOnlyList<BlockComposition> InheritedFrom(DefinitionFile anchor)
-    {
-        ArgumentNullException.ThrowIfNull(anchor);
-
-        if (anchor.Guid is null) return [];
-
-        var signatures = ContainingComponent(anchor.Guid)
-            .Where(c => !c.IsTemplate)
-            .Select(c => c.SlotSignature)
-            .Where(s => s.Count > 0)
-            .ToList();
-
-        if (signatures.Count == 0) return [];
-
-        return All
-            .Where(c => c.IsTemplate
-                        && c.SlotSignature.Count > 0
-                        && signatures.Any(c.SlotSignature.IsSubsetOf))
-            .OrderByDescending(c => c.SlotSignature.Count)
-            .ToList();
-    }
-
-    /// <summary>
-    /// Reads a field from the template a block inherits it from.
-    /// </summary>
-    /// <remarks>
-    /// Several templates can match, since a generic one's slots are a subset of a specific one's.
-    /// Resolution is <b>most specific wins</b> — the template with the most slots — which is the
-    /// same rule any inheritance scheme uses, and it beats both alternatives tried first: exact
-    /// slot equality missed blocks carrying extra components, while treating all subset matches as
-    /// equals produced disagreement and resolved nothing.
-    /// <para>
-    /// Within the most specific tier, ties must still agree; disagreement there means the match was
-    /// genuinely ambiguous and nothing is returned rather than one being picked arbitrarily.
-    /// </para>
-    /// </remarks>
-    public string? InheritedString(DefinitionFile anchor, string componentTypeName, string field)
-    {
-        var candidates = InheritedFrom(anchor)
-            .Select(c => (c.SlotSignature.Count, Value: c.ComponentOfType(componentTypeName)?.GetString(field)))
-            .Where(c => c.Value is not null)
-            .ToList();
-
-        if (candidates.Count == 0) return null;
-
-        var mostSpecific = candidates.Max(c => c.Count);
-        var values = candidates
-            .Where(c => c.Count == mostSpecific)
-            .Select(c => c.Value!)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-
-        return values.Count == 1 ? values[0] : null;
     }
 
     private static HashSet<string> ReadSlotSignature(DefinitionFile composite)

@@ -15,6 +15,23 @@ public sealed class GameDataExtractor
 {
     private const string ThrusterType = "ThrusterDefinitionObjectBuilder";
     private const string PowerableType = "PowerableBlockDefinitionObjectBuilder";
+
+    /// <summary>
+    /// The definition types that describe a placeable block, in specificity order.
+    /// </summary>
+    /// <remarks>
+    /// There is no single block-definition type. Thrusters use <c>PowerableBlockDefinition</c>,
+    /// tanks use <c>FunctionalBlockDefinition</c>, and plainer blocks use <c>CubeBlockDefinition</c>
+    /// — all three carry <c>Density</c> and <c>UIData</c>. Hardcoding the first of them silently
+    /// dropped every tank, so the lookup tries each in turn.
+    /// </remarks>
+    private static readonly string[] BlockDefinitionTypes =
+    [
+        PowerableType,
+        "FunctionalBlockDefinitionObjectBuilder",
+        "CubeBlockDefinitionObjectBuilder",
+        "ArmorBlockDefinitionObjectBuilder",
+    ];
     private const string DensityType = "CubeBlockDensityDefinitionObjectBuilder";
     private const string ResourceType = "ResourceTypeDefinitionObjectBuilder";
     private const string ThrustClassesType = "ThrustClassesConfigurationObjectBuilder";
@@ -22,18 +39,101 @@ public sealed class GameDataExtractor
     private const string InventoryType = "InventoryDefinitionObjectBuilder";
     private const string ResourceContainerType = "ResourceContainerDefinitionObjectBuilder";
     private const string PlanetInfoType = "PlanetInfoDefinitionObjectBuilder";
+    private const string BlockModelType = "BlockModelComponentDefinitionObjectBuilder";
 
     private readonly DefinitionSet _definitions;
     private readonly BlockCompositionIndex _compositions;
     private readonly List<ExtractionWarning> _warnings;
+    private readonly IOccupancySource _occupancy;
+    private readonly IDefinitionInheritance _inheritance;
 
-    public GameDataExtractor(DefinitionSet definitions)
+    public GameDataExtractor(
+        DefinitionSet definitions,
+        IOccupancySource? occupancy = null,
+        IDefinitionInheritance? inheritance = null)
     {
         ArgumentNullException.ThrowIfNull(definitions);
 
         _definitions = definitions;
         _compositions = BlockCompositionIndex.Build(definitions);
         _warnings = [.. definitions.Warnings];
+        _occupancy = occupancy ?? new TableOccupancySource();
+        _inheritance = inheritance ?? new NoDefinitionInheritance();
+    }
+
+    /// <summary>Which occupancy source answered, recorded so the config's origin is traceable.</summary>
+    public string OccupancySourceName => _occupancy.Name;
+
+    /// <summary>Which inheritance source answered.</summary>
+    public string InheritanceSourceName => _inheritance.Name;
+
+    /// <summary>Longest base chain we will walk, guarding against a cycle in the data.</summary>
+    private const int MaxInheritanceDepth = 16;
+
+    /// <summary>A definition and each of its ancestors, nearest first.</summary>
+    private IEnumerable<DefinitionFile> BaseChain(DefinitionFile? start)
+    {
+        var current = start;
+        var guid = start?.Guid;
+
+        for (var depth = 0; depth < MaxInheritanceDepth; depth++)
+        {
+            if (current is null) yield break;
+
+            yield return current;
+
+            guid = guid is null ? null : _inheritance.BaseOf(guid);
+            if (guid is null) yield break;
+
+            current = _definitions.Resolve(guid);
+        }
+    }
+
+    /// <summary>
+    /// A field from a definition, or from the nearest ancestor that states it.
+    /// </summary>
+    /// <remarks>
+    /// Walks <c>BaseGuid</c>, the game's own parent pointer. Blocks routinely omit what their base
+    /// states: no cargo container declares a density, and the value sits one level up.
+    /// </remarks>
+    private string? InheritedString(DefinitionFile? definition, string field)
+    {
+        var current = definition;
+        var guid = definition?.Guid;
+
+        for (var depth = 0; depth < MaxInheritanceDepth; depth++)
+        {
+            if (current?.GetString(field) is { Length: > 0 } value) return value;
+
+            guid = guid is null ? null : _inheritance.BaseOf(guid);
+            if (guid is null) return null;
+
+            current = _definitions.Resolve(guid);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Cells occupied by a block, resolving its model through the composite graph first.
+    /// </summary>
+    /// <remarks>
+    /// The engine keys occupancy by <em>model</em> asset, not by block, so the block's
+    /// BlockModelComponentDefinition has to be found and its <c>Model</c> reference read. That
+    /// reference is written as <c>{G}&lt;guid&gt;</c>.
+    /// </remarks>
+    private OccupancyResult OccupiedCellsFor(DefinitionFile anchor, string blockName)
+    {
+        var model = _compositions.FindSibling(anchor, BlockModelType)?.GetString("Model");
+        Guid? modelGuid = null;
+
+        if (model is { Length: > 0 })
+        {
+            var text = model.StartsWith("{G}", StringComparison.Ordinal) ? model[3..] : model;
+            if (Guid.TryParse(text, out var parsed)) modelGuid = parsed;
+        }
+
+        return _occupancy.OccupiedCells(blockName, modelGuid);
     }
 
     public GameData Extract(string toolVersion, string fingerprint)
@@ -176,7 +276,7 @@ public sealed class GameDataExtractor
 
             if (thrustClass is null)
             {
-                thrustClass = _compositions.InheritedString(definition, ThrusterType, "ThrustClass");
+                thrustClass = InheritedString(definition, "ThrustClass");
                 if (thrustClass is null)
                 {
                     Warn("unresolvedThrustClass",
@@ -185,17 +285,15 @@ public sealed class GameDataExtractor
                 }
             }
 
-            var cells = OccupiedCellsTable.For(blockName);
+            var occupancy = OccupiedCellsFor(definition, blockName);
+            var cells = occupancy.Cells;
+            provenance["occupiedCells"] = occupancy.Provenance;
+
             if (cells is null)
             {
-                provenance["occupiedCells"] = Provenance.Unknown;
                 Warn("unknownOccupiedCells",
-                    $"{blockName}: no recovered cell count, so its mass cannot be computed.",
+                    $"{blockName}: no cell count available, so its mass cannot be computed.",
                     definition.RelativePath);
-            }
-            else
-            {
-                provenance["occupiedCells"] = Provenance.Derived;
             }
 
             var density = ResolveDensity(definition, block, blockName);
@@ -232,8 +330,7 @@ public sealed class GameDataExtractor
     /// </remarks>
     private string? ResolveDensity(DefinitionFile anchor, DefinitionFile? block, string blockName)
     {
-        var density = block?.GetString("Density")
-                      ?? _compositions.InheritedString(anchor, PowerableType, "Density");
+        var density = InheritedString(block, "Density");
 
         if (density is null)
         {
@@ -243,6 +340,17 @@ public sealed class GameDataExtractor
         }
 
         return density;
+    }
+
+    /// <summary>The block definition a component belongs to, whichever flavour it is.</summary>
+    private DefinitionFile? FindBlockDefinition(DefinitionFile anchor)
+    {
+        foreach (var type in BlockDefinitionTypes)
+        {
+            if (_compositions.FindSibling(anchor, type) is { } block) return block;
+        }
+
+        return null;
     }
 
     private ConsumedResource? ReadConsumedResource(DefinitionFile thruster, DefinitionFile? block)
@@ -259,57 +367,108 @@ public sealed class GameDataExtractor
         return resource is null ? null : new ConsumedResource { Resource = resource, RatePerThrust = rate.Value };
     }
 
-    private List<Container> ExtractContainers() =>
-        _definitions.OfType(InventoryType)
-            .Where(d => !d.IsTemplate && d.GetDouble("MaxMass") is not null)
-            .Select(d =>
+    /// <summary>
+    /// Capacity above which a value is treated as "effectively unlimited" rather than real.
+    /// </summary>
+    /// <remarks>
+    /// Trade terminals and contract blocks declare a capacity of about 9.2e12 kg — the maximum of
+    /// the engine's fixed-point type, meaning unbounded. Left as-is it would dominate any total and
+    /// read as a real number.
+    /// </remarks>
+    private const double UnboundedCapacityKg = 1e12;
+
+    private List<Container> ExtractContainers()
+    {
+        var containers = new List<Container>();
+
+        // A block can declare several inventories (an assembler has input and output), which is why
+        // grouping matters: without it the same block appears twice with duplicate ids, and its
+        // capacity is understated. Total capacity is what a mass calculation needs.
+        foreach (var group in _definitions.OfType(InventoryType)
+                     .Where(d => !d.IsTemplate && d.GetDouble("MaxMass") is not null)
+                     .GroupBy(d => BlockNaming.BlockNameOf(d.RelativePath), StringComparer.Ordinal))
+        {
+            var blockName = group.Key;
+            var anchor = group.First();
+            var block = FindBlockDefinition(anchor);
+
+            // Character, backpack and datapad inventories are not placeable blocks and have no
+            // block definition behind them. Requiring one is what separates blocks from items,
+            // without hardcoding a list of names.
+            if (block is null) continue;
+
+            var capacity = group.Sum(d => d.GetDouble("MaxMass") ?? 0);
+            if (capacity >= UnboundedCapacityKg)
             {
-                var blockName = BlockNaming.BlockNameOf(d.RelativePath);
-                var block = _compositions.FindSibling(d, PowerableType);
-                var cells = OccupiedCellsTable.For(blockName);
+                Warn("unboundedCapacity",
+                    $"{blockName}: declares an effectively unlimited inventory "
+                    + $"({capacity:E2} kg); treat with care in any total.", anchor.RelativePath);
+            }
 
-                return new Container
-                {
-                    Id = BlockNaming.IdOf(blockName),
-                    Name = BlockNaming.DisplayNameOf(blockName),
-                    MaxMassKg = d.GetDouble("MaxMass")!.Value,
-                    Density = block?.GetString("Density"),
-                    OccupiedCells = cells,
-                    ProvenanceOverrides = new Dictionary<string, Provenance>(StringComparer.Ordinal)
-                    {
-                        ["occupiedCells"] = cells is null ? Provenance.Unknown : Provenance.Derived,
-                    },
-                };
-            })
-            .OrderBy(c => c.Id, StringComparer.Ordinal)
-            .ToList();
+            var occupancy = OccupiedCellsFor(anchor, blockName);
+            var cells = occupancy.Cells;
 
-    private List<Tank> ExtractTanks() =>
-        _definitions.OfType(ResourceContainerType)
-            .Where(d => !d.IsTemplate && d.GetDouble("MaxCapacity") is not null)
-            .Select(d =>
+            containers.Add(new Container
             {
-                var blockName = BlockNaming.BlockNameOf(d.RelativePath);
-                var block = _compositions.FindSibling(d, PowerableType);
-                var cells = OccupiedCellsTable.For(blockName);
-
-                return new Tank
+                Id = BlockNaming.IdOf(blockName),
+                Name = BlockNaming.DisplayNameOf(blockName),
+                MaxMassKg = capacity,
+                Density = ResolveDensity(anchor, block, blockName),
+                OccupiedCells = cells,
+                ProvenanceOverrides = new Dictionary<string, Provenance>(StringComparer.Ordinal)
                 {
-                    Id = BlockNaming.IdOf(blockName),
-                    Name = BlockNaming.DisplayNameOf(blockName),
-                    Resource = d.GetString("ResourceType"),
-                    MaxCapacity = d.GetDouble("MaxCapacity")!.Value,
-                    MaxDischargeRate = d.GetDouble("MaxDischargeRate"),
-                    Density = block?.GetString("Density"),
-                    OccupiedCells = cells,
-                    ProvenanceOverrides = new Dictionary<string, Provenance>(StringComparer.Ordinal)
-                    {
-                        ["occupiedCells"] = cells is null ? Provenance.Unknown : Provenance.Derived,
-                    },
-                };
-            })
-            .OrderBy(t => t.Id, StringComparer.Ordinal)
-            .ToList();
+                    ["occupiedCells"] = occupancy.Provenance,
+                },
+            });
+        }
+
+        return containers.OrderBy(c => c.Id, StringComparer.Ordinal).ToList();
+    }
+
+    private List<Tank> ExtractTanks()
+    {
+        var tanks = new List<Tank>();
+
+        foreach (var group in _definitions.OfType(ResourceContainerType)
+                     .Where(d => !d.IsTemplate && d.GetDouble("MaxCapacity") is not null)
+                     .GroupBy(d => BlockNaming.BlockNameOf(d.RelativePath), StringComparer.Ordinal))
+        {
+            var blockName = group.Key;
+            var anchor = group.First();
+            var block = FindBlockDefinition(anchor);
+            if (block is null) continue;
+
+            var occupancy = OccupiedCellsFor(anchor, blockName);
+            var cells = occupancy.Cells;
+
+            // Hydrogen tanks omit ResourceType and inherit it, exactly as they do ThrustClass.
+            var resource = InheritedString(anchor, "ResourceType");
+
+            if (resource is null)
+            {
+                Warn("unresolvedTankResource",
+                    $"{blockName}: no ResourceType and none inherited, so its contents cannot be "
+                    + "identified.", anchor.RelativePath);
+            }
+
+            tanks.Add(new Tank
+            {
+                Id = BlockNaming.IdOf(blockName),
+                Name = BlockNaming.DisplayNameOf(blockName),
+                Resource = resource,
+                MaxCapacity = group.Max(d => d.GetDouble("MaxCapacity") ?? 0),
+                MaxDischargeRate = anchor.GetDouble("MaxDischargeRate"),
+                Density = ResolveDensity(anchor, block, blockName),
+                OccupiedCells = cells,
+                ProvenanceOverrides = new Dictionary<string, Provenance>(StringComparer.Ordinal)
+                {
+                    ["occupiedCells"] = occupancy.Provenance,
+                },
+            });
+        }
+
+        return tanks.OrderBy(t => t.Id, StringComparer.Ordinal).ToList();
+    }
 
     // ── planets ───────────────────────────────────────────────────────────────────────────────
 
@@ -338,6 +497,17 @@ public sealed class GameDataExtractor
             {
                 atmosphere = StandardAtmosphere;
                 provenance["atmosphere"] = Provenance.Assumed;
+            }
+            else if (atmosphere is { } a && a.AffectDistance > ImplausibleAtmosphereExtent)
+            {
+                // Real, inherited, and almost certainly not meaningful: the legacy planet template
+                // declares an atmosphere reaching 100 planet radii. Surface density is unaffected —
+                // which is all v1 uses — but any altitude calculation would be nonsense.
+                Warn("implausibleAtmosphere",
+                    $"{displayName}: inherits an atmosphere extending to {a.AffectDistance:0.##} "
+                    + "planet radii, which is unlikely to be meaningful. Surface density is "
+                    + "unaffected; treat altitude results with suspicion.",
+                    info.RelativePath);
             }
 
             if (geometry.GravityAffectDistance is null)
@@ -396,6 +566,16 @@ public sealed class GameDataExtractor
     private static Atmosphere StandardAtmosphere =>
         new() { ConstantAffectDistance = 1.08, AffectDistance = 1.15 };
 
+    /// <summary>
+    /// Atmosphere extent, in planet radii, beyond which the value is reported as suspect.
+    /// </summary>
+    /// <remarks>
+    /// Every planet that states its own geometry uses 1.15. The legacy planet template says 100,
+    /// which the older VS1_5 planets inherit — real data, faithfully resolved, but not a number to
+    /// build an altitude model on.
+    /// </remarks>
+    private const double ImplausibleAtmosphereExtent = 5.0;
+
     private readonly record struct PlanetGeometry(
         double? GravityAffectDistance, Atmosphere? Atmosphere, bool Measured);
 
@@ -448,26 +628,33 @@ public sealed class GameDataExtractor
     /// </summary>
     private IEnumerable<JsonElement> PlanetComponents(DefinitionFile? prefab)
     {
-        if (prefab?.GetElement("_entity") is not { ValueKind: JsonValueKind.Object } entity)
+        // Walk the prefab's inheritance chain, and for each link its composite's chain too.
+        // Only the VS1_5 planets state gravity and atmosphere on their own prefab; the rest
+        // inherit them, which is why nothing was found before the BaseGuid pointer existed.
+        foreach (var link in BaseChain(prefab))
         {
-            yield break;
-        }
+            if (link.GetElement("_entity") is not { ValueKind: JsonValueKind.Object } entity)
+            {
+                continue;
+            }
 
-        // The prefab's own delta, where VS1_5 planets keep gravity and atmosphere.
-        if (entity.TryGetProperty("ObjectBuilders", out var builders))
-        {
-            foreach (var component in ChangedValues(builders)) yield return component;
-        }
+            if (entity.TryGetProperty("ObjectBuilders", out var builders))
+            {
+                foreach (var component in ChangedValues(builders)) yield return component;
+            }
 
-        // Then the composite it points at, in case a planet states them there instead.
-        var compositeGuid = entity.TryGetProperty("Definition", out var def)
-                            && def.ValueKind == JsonValueKind.String
-            ? def.GetString()
-            : null;
+            var compositeGuid = entity.TryGetProperty("Definition", out var def)
+                                && def.ValueKind == JsonValueKind.String
+                ? def.GetString()
+                : null;
 
-        if (_definitions.Resolve(compositeGuid)?.GetElement("Components") is { } components)
-        {
-            foreach (var component in ChangedValues(components)) yield return component;
+            foreach (var composite in BaseChain(_definitions.Resolve(compositeGuid)))
+            {
+                if (composite.GetElement("Components") is { } components)
+                {
+                    foreach (var component in ChangedValues(components)) yield return component;
+                }
+            }
         }
     }
 

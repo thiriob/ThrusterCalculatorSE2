@@ -404,7 +404,38 @@ Twelve independent integer hits is not coincidence. The formula is right, and �
 wiki's **mass** column is accurate even though its **thrust** column was badly wrong (§3.1). Different
 contributors, different reliability; judge columns, not sources.
 
-### 4.0.1 Where V comes from — and why it isn't in the JSON
+### 4.0.0 SOLVED — V comes straight from the game's own cache
+
+**`contentcache.vrb` can be read, and it contains the game's precomputed block occupancy.** Verified
+by spike against SE2 2.3.0.2798, reusing `../BlueprintHelperSE2`'s working `.vrb` stack
+(`Se2Runtime` + `VrbSerializer` + `ContentCache`):
+
+```
+blob type  Keen.Game2.Simulation.GameSystems.BlockDataGenerators.GeneratedBlockData  →  1,454 entries
+
+AtmosphericThruster250   min=(-2,-2,-3) max=(3,3,4)   size=6x6x8   V=288   MATCH
+CargoContainer150        min=(-2,-2,-2) max=(3,3,3)   size=6x6x6   V=216   MATCH
+```
+
+Both agree **exactly** with the values recovered by solving the mass formula backwards (§4.0). That
+is a genuine independent confirmation from two unrelated directions — the formula transcription and
+every recovered `V` are correct — and it settles the shape questions too: the 2.5 m thruster really
+is elongated (6×6×8), the 1.5 m container really is a cube (6³).
+
+Consequences:
+
+- **The hand-maintained cell-count table becomes unnecessary.** The cache covers 1,454 blocks
+  against our 16, so containers, tanks and everything else are included.
+- The occupancy is a `BoundingBoxI`; `V` is `(max − min + 1)` per axis, multiplied — matching
+  `ComputeMassAndHP`'s `GetSizeIncludingMax().Volume()`.
+- It requires hosting the game's assemblies, so it belongs in the quarantined producer-side
+  `Engine` project that Technic §2.3 reserved and deliberately left uncreated. That reservation now
+  has a concrete reason to be taken up.
+
+**It does not solve density.** The cache holds *generated* data, not merged definitions, so §4.4's
+container-density question stands unchanged.
+
+### 4.0.1 Where V comes from in the source data
 
 `OccupiedGridCellsGroups` is marked `SerializerFormatSet.None`: computed, never serialized. It's set
 by `SetOccupancy(BlockOccupancyData)`, produced by
@@ -505,6 +536,105 @@ assuming litres or kg. **To convert full-tank capacity into kilograms we still n
 for hydrogen** — check `Hydrogen.def` for a density field; if absent, that's another Tier-2 question.
 
 Note tank *block* mass still needs the mass curve; only the *contents* are free.
+
+### 4.4 Recovered cell counts for tanks — and where containers stall
+
+Applying §4.0's method to published block masses:
+
+| Block | Density | V | Mass reproduced |
+|---|---|---:|---:|
+| HydrogenTank150 | Mostly Hollow (11) | 216 | 382.40 kg |
+| HydrogenTank500 | Mostly Hollow (11) | 1 820 | 1 534.87 kg |
+| HydrogenTank1250 | Mostly Hollow (11) | 36 244 | 9 552.79 kg |
+
+Tighter evidence than the thrusters: those reference masses are published to two decimals and each
+`V` reproduces its mass to that precision. `V = 216 = 6³` for the 1.5 m tank is exactly a full cube
+of 25 cm cells, which independently corroborates the cell size.
+
+**Cargo containers stall on density, not on V.** Their base definition
+`Templates/Blocks/BaseDefinitions/CargoContainersFunctionalBlockDefinition.def` gives
+`Density = 3dca2cf9` — **Hollow (7)** — and with that modifier CargoContainer150's published
+245.17 kg solves to `V = 216`, the same 6³ cube as the tank. But the extractor cannot *reach* that
+template: it is a **standalone base definition with no template composite**, and the slot-signature
+inheritance (Technic §7.2.2) only matches templates that have one.
+
+### 4.4.1 SOLVED — the parent pointer lives in `definitionsets.vrb`
+
+**Definitions carry an explicit `BaseGuid`, and it is not in the `.def` files.** It lives in
+`definitionsets.vrb`, in `DefinitionLoadingData`, alongside `IsAbstract`, `PartialDefinitions` and
+`PriorityOverrides` — a full inheritance system that no amount of JSON inspection could reveal.
+
+Verified on SE2 2.3.0.2798:
+
+```
+CargoContainer150_...FunctionalBlockDefinition   own Density (none)
+  base[1]  1f272188  CargoContainersFunctionalBlockDefinition  Density = Hollow (7)   ← abstract
+  base[2]  ea3505ef  FunctionalBlockDefinition                                        ← abstract
+```
+
+9,142 of 17,196 definitions declare a base, so this is pervasive rather than an edge case.
+Resolution is simply: read the field; if absent, follow `BaseGuid` and repeat.
+
+**Independently confirmed by in-game measurement.** Measured block masses (cockpit-only baseline
+subtracted) against Hollow (7) and the cache's cell counts:
+
+| Container | Measured | Predicted | |
+|---|---:|---:|---|
+| 1.5 m | 245 kg | 245.17 | ✅ |
+| 2.5 m | 669 kg | 669.08 | ✅ |
+| 7.5 m | 4 982 kg | 5 092.09 | ❌ 2.2% out |
+
+Two exact matches settle the density. The 7.5 m gap is **not** a density error — the same modifier
+is right for its siblings — but a cell-count one: the cache reports 26,912 cells where the measured
+mass implies ~25,946. Worth chasing separately; possibly overlapping cell groups being
+double-counted in the sum.
+
+#### Two rules that were tried first, and were wrong
+
+Both inferred the parent from component-slot signatures, because the real pointer had not been found:
+
+| Rule | Outcome |
+|---|---|
+| Slot containment (template ⊆ block) | Thrusters and tanks resolved; containers unresolved and warned |
+| Overlap ≥ 75%, best match wins | Containers resolved — **to the wrong template**. Tanks silently became Mostly Solid (20) instead of Mostly Hollow (11), breaking three masses that had matched exactly. **Zero warnings**, because the matcher believed it had succeeded |
+
+The second is the instructive one: the only case in this project where a heuristic produced
+confident wrong numbers *and* suppressed the warning that would have exposed them. It was caught
+only by re-running the known-mass regression check. Both are now deleted in favour of `BaseGuid`.
+
+### 4.4.2 The same pointer fixes planet atmospheres
+
+Planet composites are delta-encoded against a parent too, so the `BaseGuid` walk applies there
+unchanged. Applying it took **assumed atmospheres from 8 planets down to 1**.
+
+Verified against what each planet's own definition states:
+
+| Planet | Own definition | Extracted | |
+|---|---|---|---|
+| EarthLike | const 1.08, edge 1.15 | same | ✅ |
+| Verdure | const 1, edge 1.15 | same | ✅ |
+| Palatine | const 1, edge 1.15 | same | ✅ |
+| Byblos | const 1, edge 1.15 | same | ✅ |
+| Kemik | edge 1.15, const absent | const 1 inherited | ✅ |
+| Caligo | edge 1.15, const absent | const 1 inherited | ✅ |
+
+**Both playable planets — Verdure and Kemik — are now measured rather than assumed**, which was the
+gap that mattered (§4.5).
+
+Three VS1_5 planets (MarsLike, Testerran, WaterPlanet) declare no atmosphere at all and inherit from
+`Templates/Legacy/PlanetWithAtmosphere`, which says **`AffectDistance = 100`** — an atmosphere
+reaching 100 planet radii. That resolution is faithful to the game's own chain, but the number is
+not usable, so it is extracted *and* warned (`implausibleAtmosphere`). Surface density is unaffected,
+which is all v1 uses; only an altitude model would care. Geomeles has no atmosphere anywhere in its
+chain and remains the single assumed case.
+
+### 4.5 Which planets actually matter
+
+Only **Verdure** and **Kemik** are reachable in the current build; the other eight ship as data but
+are not playable. That sharpens §5.3 rather than softening it: both playable planets are among those
+whose atmosphere geometry we cannot read and must assume. The assumption is harmless for v1, which
+sizes at the surface where density is 1.0 regardless, but it is exactly the value an altitude
+feature would depend on.
 
 ---
 

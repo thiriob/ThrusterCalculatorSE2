@@ -14,6 +14,7 @@
   <Project Path="ThrusterCalculator.Core/ThrusterCalculator.Core.csproj" />
   <Project Path="ThrusterCalculator.Core.Tests/ThrusterCalculator.Core.Tests.csproj" />
   <Project Path="ThrusterCalculator.Extraction/ThrusterCalculator.Extraction.csproj" />
+  <Project Path="ThrusterCalculator.Engine/ThrusterCalculator.Engine.csproj" />
   <Project Path="ThrusterCalculator.Extraction.Tests/ThrusterCalculator.Extraction.Tests.csproj" />
   <Project Path="ThrusterCalculator.Cli/ThrusterCalculator.Cli.csproj" />
   <Project Path="ThrusterCalculator.Gui/ThrusterCalculator.Gui.csproj" />
