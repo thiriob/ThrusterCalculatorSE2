@@ -87,12 +87,14 @@ public class SchemaDumpTests
     }
 
     [Fact]
-    public void OrdersByFrequency()
+    public void OrdersByDescendingFrequency()
     {
-        var schemas = SchemaDump.Describe(Fixtures.Scan());
+        // The property, not a particular type: the most common types come first so a dump is
+        // readable top-down. Asserting which type happens to win would break whenever a fixture
+        // is added.
+        var counts = SchemaDump.Describe(Fixtures.Scan()).Select(s => s.Count).ToList();
 
-        Assert.Equal(Fixtures.ThrusterType, schemas[0].TypeName);
-        Assert.Equal(3, schemas[0].Count);
+        Assert.Equal(counts.OrderByDescending(c => c), counts);
     }
 
     [Fact]

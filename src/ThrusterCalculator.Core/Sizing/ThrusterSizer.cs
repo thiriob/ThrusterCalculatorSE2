@@ -48,19 +48,20 @@ public sealed class ThrusterSizer
     /// Mass of a block in kg, or <c>null</c> when it cannot be computed.
     /// </summary>
     /// <remarks>
-    /// A block with no density definition weighs exactly the floor mass — that is the engine's own
-    /// behaviour, not a fallback of ours. An unknown cell count is genuinely unknown, and returning
-    /// zero there would silently corrupt the sizing denominator.
+    /// Both an unresolvable density and an unknown cell count yield <c>null</c>. Neither may fall
+    /// back to the floor mass: an earlier version returned <see cref="CalculationEngine.MinBlockMassKg"/>
+    /// for a missing density on the grounds that the engine does so for a block genuinely declaring
+    /// none — but in a config a missing reference means <em>we failed to resolve it</em>, which is a
+    /// different thing. The result was eight-tonne thrusters silently reported as weighing 5 kg,
+    /// and sizing answers built on them. An unknown that surfaces beats a plausible wrong number.
     /// </remarks>
     public double? BlockMassKg(string? densityId, int? occupiedCells)
     {
-        var density = _index.Density(densityId);
-        if (density is null)
-        {
-            return _engine.MinBlockMassKg;
-        }
+        if (occupiedCells is null) return null;
 
-        return occupiedCells is null
+        var density = _index.Density(densityId);
+
+        return density is null
             ? null
             : _engine.BlockMassKg(occupiedCells.Value, density.MassCurveModifier);
     }

@@ -502,6 +502,24 @@ folder. A miss returns `null` and becomes a recorded warning. An earlier draft o
 proposed same-directory matching as the primary method; the composite graph is strictly better and
 supersedes it.
 
+### 7.2.2 Template inheritance
+
+Concrete blocks routinely omit fields and inherit them from base definitions under `Templates/`.
+This is not an edge case: hydrogen thrusters inherit `ThrustClass`, and **seven of twelve thrusters
+inherit `Density`** — without resolving it, their mass cannot be computed at all.
+
+Templates are matched by **component-slot signature**: a template's slots are a subset of those of
+every block built from it. `BlockCompositionIndex.InheritedString` resolves with **most specific
+wins** (the matching template with the most slots), requiring unanimity within that tier.
+
+Two simpler rules were tried against real data and failed, which is why the rule is what it is:
+
+| Rule | Result |
+|---|---|
+| Exact slot-set equality | Missed blocks carrying extra components — the 5 m and 10 m atmospheric thrusters silently lost their density |
+| All subset matches as equals | Too many templates matched and disagreed; unanimity then resolved *nothing* (7 densities and 4 classes lost) |
+| **Most specific wins** | All 12 thrusters resolve; every computed mass matches the game |
+
 ### 7.3 Shallow delta decoding
 
 Planet data is delta-encoded (Research §2.4, §5.2). We do **not** implement engine inheritance

@@ -659,9 +659,10 @@ cargo/tank capacity (§4.3), atmosphere geometry (§5.2). What remains is refine
    `VRage.Voxels.SurfaceGravity` is the faithful route.
 5. **Hydrogen mass per capacity unit** (§4.3) — needed to turn full tanks into kilograms.
 6. **`ResourcesRequiredToThrust` units per class** (§3) — resolve each `ConsumedResource` GUID.
-7. ~~Template inheritance~~ — **confirmed real** (§3.2). Concrete blocks inherit from
-   `Templates\Blocks\BaseDefinitions\`; a one-level fallback is required. Which *other* fields rely
-   on it is still worth enumerating with `tc dump-schemas`.
+7. ~~Template inheritance~~ — **confirmed real and implemented** (§3.2). It is more pervasive than
+   first thought: besides hydrogen's `ThrustClass`, **seven of twelve thrusters inherit their
+   `Density`** rather than restating it, so without it their mass cannot be computed at all.
+   Templates are matched by component-slot signature, most specific wins (Technic.md §7.2.1).
 8. ~~Hydrogen's missing `ThrustClass`~~ — **answered** (§3.2): the `HydrogenThrusterDefinition`
    template supplies `"Hydrogen"`. Measured, not assumed.
 9. **Verify the 750 cargo container's 2 150 400 kg** (§4.3) — plausibly a placeholder.

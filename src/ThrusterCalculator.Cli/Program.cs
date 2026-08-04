@@ -20,6 +20,7 @@ internal static class Program
             return command switch
             {
                 "dump-schemas" => DumpSchemasCommand.Run(rest),
+                "extract" => ExtractCommand.Run(rest),
                 "verify" => VerifyCommand.Run(rest),
                 "-h" or "--help" or "help" => Help(),
                 _ => Unknown(command),
@@ -55,11 +56,12 @@ internal static class Program
         COMMANDS
           dump-schemas    Group every .def by $Type and list the fields each carries.
                           Diff two runs across a game update to see what Keen changed.
+          extract         Produce gamedata.json from a local Space Engineers 2 install.
           verify          Check a local install against the invariants we rely on.
-          extract         Produce gamedata.json.  (not implemented yet)
 
         COMMON OPTIONS
           --install PATH  Use this Space Engineers 2 install instead of searching for one.
+          --out PATH      Where to write output (extract, dump-schemas).
 
         NOTES
           Requires Space Engineers 2 installed. The GUI and web frontends do not —
