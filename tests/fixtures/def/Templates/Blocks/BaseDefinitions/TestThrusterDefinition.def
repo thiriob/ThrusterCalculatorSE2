@@ -1,0 +1,10 @@
+{
+  "$Bundles": { "Game2": "9.9.9.333" },
+  "$Type": "Game2:Keen.Test.Fake.Movement.ThrusterDefinitionObjectBuilder",
+  "$Value": {
+    "Guid": "aaaaaaaa-0000-0000-0000-000000000004",
+    "ThrustPower": 0,
+    "ThrustDirection": "Forward",
+    "ThrustClass": "TestHydrogen"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "$Bundles": { "Game2": "9.9.9.111" },
+  "$Type": "VRage:Keen.Test.Fake.DCS.EntityCompositeDefinitionObjectBuilder",
+  "$Value": {
+    "Guid": "dddddddd-0000-0000-0000-000000000002",
+    "Components": [
+      { "Definition": "aaaaaaaa-0000-0000-0000-000000000002" },
+      { "Definition": "cccccccc-0000-0000-0000-000000000001" }
+    ]
+  }
+}

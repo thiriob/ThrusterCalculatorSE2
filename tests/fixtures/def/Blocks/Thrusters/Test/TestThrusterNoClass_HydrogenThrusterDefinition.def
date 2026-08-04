@@ -1,0 +1,9 @@
+{
+  "$Bundles": { "Game2": "9.9.9.222", "VRage": "9.9.9.222" },
+  "$Type": "Game2:Keen.Test.Fake.Movement.ThrusterDefinitionObjectBuilder",
+  "$Value": {
+    "Guid": "aaaaaaaa-0000-0000-0000-000000000002",
+    "ThrustPower": 999,
+    "ResourcesRequiredToThrust": 7
+  }
+}

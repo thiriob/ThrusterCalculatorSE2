@@ -1,0 +1,5 @@
+{
+  "$Bundles": { "Game2": "9.9.9.111" },
+  "$Type": "Game2:Keen.Test.Fake.CompletelyUnknownObjectBuilder",
+  "$Value": { "Guid": "aaaaaaaa-0000-0000-0000-000000000003", "SomethingNew": true }
+}

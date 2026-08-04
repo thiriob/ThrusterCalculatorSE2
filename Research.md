@@ -147,6 +147,10 @@ Notes:
 - **Hydrogen omits `ThrustClass` entirely**, and its files are named `*_HydrogenThrusterDefinition.def`
   — but the `$Type` is the same `ThrusterDefinitionObjectBuilder`. **The parser must key off `$Type`,
   never filename**, and treat missing `ThrustClass` as valid.
+- **There are 14 `ThrusterDefinitionObjectBuilder` definitions, not 12.** The table above was built by
+  globbing `Content\Blocks\Thrusters\`, which misses two **base templates** in
+  `Content\Templates\Blocks\BaseDefinitions\`. Found by `tc dump-schemas`; see §3.2 — they resolve an
+  open question rather than being noise.
 - **`ResourcesRequiredToThrust` is not comparable across classes.** Atmospheric/Ion are Electricity
   (kW). Hydrogen's `0.75 … 120` against 60 kN … 19 MN is clearly a hydrogen flow rate in other units.
   Resolve each thruster's `ConsumedResource` GUID individually before computing any efficiency metric.
@@ -156,6 +160,68 @@ Notes:
   and surface it as "not implemented in this build."
 - Thrust does not follow a clean power law against size (thrust ÷ size³ for atmospheric:
   0.040 / 0.018 / 0.012 / 0.015 — non-monotonic). **Treat the table as data, never interpolate.**
+
+### 3.2 The base templates — and the answer to hydrogen's missing class
+
+`Content\Templates\Blocks\BaseDefinitions\` holds two more thruster definitions, which concrete
+blocks inherit from:
+
+```jsonc
+// HydrogenThrusterDefinition.def
+{ "ThrustPower": 0,     "ThrustDirection": "Forward", "ThrustClass": "Hydrogen" }
+// IonThrusterDefinition.def
+{ "ThrustPower": 10000, "ThrustDirection": "Forward", "ThrustClass": "Ion" }
+```
+
+Three things follow, all previously open:
+
+1. **Hydrogen thrusters are `ThrustClass: "Hydrogen"`** — they omit it in their own definition and
+   inherit it from this template. That closes the question of what the engine defaults to; it is
+   *measured*, not inferred. `ThrustClassesConfiguration` already defines a `Hydrogen` entry
+   (§3.3), and this is what points at it.
+2. **Template inheritance is real and must be implemented** — at least a one-level fallback for
+   fields absent on a concrete block.
+3. **`ThrustDirection` does exist in the data**, on the templates, as `"Forward"`.
+
+Templates must be **excluded from the block catalogue**: `HydrogenThrusterDefinition` has
+`ThrustPower: 0`, so counting it as a real thruster both inflates the count and looks like a thruster
+that produces nothing. They are identified by living under `Templates/` — the one place in this data
+where path carries meaning.
+
+### 3.3 How a block's definitions are joined
+
+A block is not one definition. A thruster's thrust lives in `*_ThrusterDefinition.def`, while its
+density, PCU and name live in `*_PowerableBlockDefinition.def` — and **neither file names the other**.
+
+The join is the block's **`EntityCompositeDefinitionObjectBuilder`** (`*_ServerComposition.def` /
+`*_ClientComposition.def`), which lists the component definitions making up the entity:
+
+```jsonc
+"Components": {
+  "$DeltaEncoded": true,
+  "Keys": [ … ],                       // component type slots
+  "Changed": [
+    { "Kind": "Update", "Index": 4, "Value": { "Definition": "00516d6b-…" } },  // PowerableBlock
+    { "Kind": "Update", "Index": 5, "Value": { "Definition": "b4c0770f-…" } }   // Thruster
+  ]
+}
+```
+
+This is the engine's own mechanism for deciding which components form an entity, so it is as durable
+as the data format itself — **not** a heuristic about folder layout.
+
+**Verified against the shipped data:** all 14 thruster definitions resolve to exactly one
+`PowerableBlockDefinitionObjectBuilder` each, via 2 composites apiece (client + server). Matching by
+shared directory was considered and rejected: it works on today's layout but would mispair if two
+blocks ever shared a folder, and — worse — a fallback silently standing in for the real join would
+hide exactly the breakage worth knowing about.
+
+Note the GUIDs sit **inline** in the `Changed` array, so shallow delta decoding (§2.4) suffices.
+
+**Caution for projection:** `UIData.Name` is *not* a per-block display name. All four atmospheric
+thrusters report `ThrusterAtmo` and all four ions report `ThrusterIon`; hydrogen blocks inherit
+`ThrusterHydro` from their template. It is a family key. Display names must be synthesised by the
+producer (Schema.md §8).
 
 ### 3.1 Cross-check against the community wiki — and why it validates the whole premise
 
@@ -593,9 +659,11 @@ cargo/tank capacity (§4.3), atmosphere geometry (§5.2). What remains is refine
    `VRage.Voxels.SurfaceGravity` is the faithful route.
 5. **Hydrogen mass per capacity unit** (§4.3) — needed to turn full tanks into kilograms.
 6. **`ResourcesRequiredToThrust` units per class** (§3) — resolve each `ConsumedResource` GUID.
-7. **Template inheritance** (§2.4) — which fields need fallback to `Templates\Blocks\BaseDefinitions\`.
-8. **Hydrogen's missing `ThrustClass`** (§3) — the config in §3.3 *does* define a `Hydrogen` key, so
-   the engine presumably defaults to it. Confirm rather than assume.
+7. ~~Template inheritance~~ — **confirmed real** (§3.2). Concrete blocks inherit from
+   `Templates\Blocks\BaseDefinitions\`; a one-level fallback is required. Which *other* fields rely
+   on it is still worth enumerating with `tc dump-schemas`.
+8. ~~Hydrogen's missing `ThrustClass`~~ — **answered** (§3.2): the `HydrogenThrusterDefinition`
+   template supplies `"Hydrogen"`. Measured, not assumed.
 9. **Verify the 750 cargo container's 2 150 400 kg** (§4.3) — plausibly a placeholder.
 
 ## 9. First implementation task

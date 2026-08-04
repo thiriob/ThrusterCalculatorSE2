@@ -1,0 +1,5 @@
+{
+  "$Bundles": { "Game2": "9.9.9.111" },
+  "$Type": "Game2:Keen.Test.Fake.CubeBlocks.CubeBlockDensityDefinitionObjectBuilder",
+  "$Value": { "Guid": "cccccccc-0000-0000-0000-000000000001", "MassCurveModifier": 10 }
+}

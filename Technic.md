@@ -485,6 +485,23 @@ The failure mode to design against is *silent* loss — dropping a thruster fami
 confident wrong config. So the artifact records **counts per `$Type`**, and the UI surfaces
 "12 thrusters found": a drop to 8 after a patch becomes visible.
 
+### 7.2.1 Joining a block's definitions
+
+A block's data is split across files that do not reference each other. The join is its
+`EntityCompositeDefinition`, which lists the component definitions forming the entity
+(Research.md §3.3) — the engine's own mechanism, not a guess about folder layout.
+
+`BlockCompositionIndex.FindSibling` implements it, and `tc verify` asserts every thruster still
+pairs, so a restructuring by Keen fails loudly instead of the app quietly losing every thruster's
+mass and name.
+
+**Deliberately no fallback.** Matching by shared directory was considered and rejected on the same
+principle as the unknown-model-kind exception (§3.2): a weaker method silently substituting for the
+real one masks the breakage worth knowing about, and could mispair outright if two blocks shared a
+folder. A miss returns `null` and becomes a recorded warning. An earlier draft of this document
+proposed same-directory matching as the primary method; the composite graph is strictly better and
+supersedes it.
+
 ### 7.3 Shallow delta decoding
 
 Planet data is delta-encoded (Research §2.4, §5.2). We do **not** implement engine inheritance
@@ -604,11 +621,15 @@ Note the producer/consumer split had already softened the "survives a retune" co
 automatically under any option. Only a change to the formula's *shape* — or to a block's collision
 mesh — needs work, and both are detectable (§5.5).
 
-### 10.4 Incidental finding
+### 10.4 Incidental finding — corrected
 
-`ThrusterDefinition` exposes a **`ThrustDirection`** property that appears in no `.def` file (so every
-thruster runs a default). Not needed for Plan mode; it's the field per-axis analysis will want in
-Check mode.
+`ThrusterDefinition` exposes a **`ThrustDirection`** property. An earlier draft said it appears in no
+`.def` file; running `tc dump-schemas` against the real install showed otherwise — it is present on
+**2 of 14** thruster definitions, both base templates, with the value `"Forward"`. Concrete blocks
+inherit it. Not needed for Plan mode; it's the field per-axis analysis will want in Check mode.
+
+Worth noting *how* that was corrected: the schema dump was built precisely so claims about the data
+stop depending on how thorough a manual grep happened to be. It earned its keep on first run.
 
 ---
 

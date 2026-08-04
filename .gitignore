@@ -19,6 +19,10 @@ data/
 *.vrb
 **/realdata/
 
+# ...except our own hand-written synthetic .def fixtures, which contain invented values only
+# and are what the parser tests run against (Technic.md §7.1).
+!tests/fixtures/def/**/*.def
+
 # ─────────────────────────────────────────────────────────────────────────────
 # .NET
 # ─────────────────────────────────────────────────────────────────────────────

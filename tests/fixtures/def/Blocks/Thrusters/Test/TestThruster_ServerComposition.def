@@ -1,0 +1,17 @@
+{
+  "$Bundles": { "Game2": "9.9.9.111" },
+  "$Type": "VRage:Keen.Test.Fake.DCS.EntityCompositeDefinitionObjectBuilder",
+  "$Value": {
+    "Guid": "dddddddd-0000-0000-0000-000000000001",
+    "Components": {
+      "$DeltaEncoded": true,
+      "Keys": [ "slot-0", "slot-1", "slot-2" ],
+      "Changed": [
+        { "Kind": "Update", "Index": 1, "Value": { "Definition": "bbbbbbbb-0000-0000-0000-000000000001" } },
+        { "Kind": "Update", "Index": 2, "Value": { "Definition": "aaaaaaaa-0000-0000-0000-000000000001" } },
+        { "Kind": "Insert", "Index": 3, "Value": { "Definition": null, "Type": "Some.Component" } }
+      ],
+      "Removed": []
+    }
+  }
+}
