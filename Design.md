@@ -1,206 +1,264 @@
-# ThrustersHelper SE2 — Design & UX
+# ThrusterCalculator SE2 — Design & UX
 
 Companion to [Research.md](Research.md) (what the game gives us) and [Technic.md](Technic.md) (how
-it's built). This document is about **what the app does and how it feels to use**.
-
-Status: proposal. Decisions marked **[OPEN]** need your call.
+it's built). This document is **what the app does and how it feels to use**.
 
 ---
 
 ## 1. The problem, stated as a player
 
-You are in the ship editor. You have a hull. You want to know:
+You have a ship idea and a departure planet. You want to know:
 
-> *"Will this thing actually fly, and if not, what do I add?"*
+> *"How much thrust do I need, and what should I actually bolt on?"*
 
-Every follow-up is a variation: will it lift off Verdure fully loaded? Is it under-thrusted
-sideways? Am I wasting mass on thrusters I don't need? Which thruster size is the efficient choice
-here?
+The app answers that in under ten seconds, with numbers **correct for the build of the game currently
+installed** — not for the build a wiki was written against.
 
-The app exists to answer that question in **under ten seconds**, with numbers that are *correct for
-the build of the game currently installed* — not for the build a wiki was written against.
+Research §3.1 is the proof this matters: the community wiki's entire ion-thrust column is a
+copy-paste of the atmospheric column, overstating ion thrust by **3.5–5×**. A player sizing an
+ion ship from the wiki under-builds by a factor of four and does not fly.
 
 ## 2. Design principles
 
-These are the tie-breakers when a specific decision is contested.
+**P1 — The game is the source of truth, and it moves.** Every number traces to a definition file in
+the installed game. No hardcoded stat tables. When the game patches, the app shows new numbers with
+no code change and no update from us.
 
-**P1 — The game is the source of truth, and it moves.** Every number displayed should be traceable
-to a definition file in the installed game. No hardcoded stat tables. When the game patches, the app
-should show the new numbers with no code change and no update from us. This is the whole reason the
-app exists (Research §3: thrust doesn't even follow a clean power law, so modelling it is hopeless).
+**P2 — Be honest about what we don't know.** Three visible tiers, and each value carries its own:
 
-**P2 — Be honest about what we don't know.** The game is in alpha and several things are genuinely
-unknown (atmospheric falloff curve, mass curve, planet gravity — Research §8). The app must
-**visibly distinguish** three tiers:
-
-| Tier | Meaning | Visual treatment |
+| Tier | Meaning | Treatment |
 |---|---|---|
-| **Measured** | Read from game definition files | Normal |
-| **Derived** | Computed from measured values by our own math | Normal, with a "how?" affordance |
-| **Assumed** | Our curated guess or a user-entered value | Marked, and editable inline |
+| **Measured** | Read from game files, or computed by the game's own code | Normal |
+| **Derived** | Computed by our math from measured values | Normal, with a "how?" affordance |
+| **Assumed** | Curated guess or user-entered | Marked, editable inline |
 
-A confidently-wrong number is worse than a flagged estimate. This principle is *why* the app is
-trustworthy during alpha; it should not be compromised for visual tidiness.
+This is load-bearing, not decorative: it's what lets the mass curve start as `Assumed` and later
+become `Measured` (Research §4.2) without restructuring the UI.
 
-**P3 — Answer first, detail on demand.** The verdict ("lifts off Verdure at 1.4× — yes") is the
-product. Per-axis breakdowns, power draw, and the definition graph are progressive disclosure.
+**P3 — Answer first, detail on demand.** The proposed configurations are the product.
 
-**P4 — Never require the game to be running.** Files on disk only. The app is a second-monitor
-companion, not an overlay (and Research §1 rules out an overlay anyway).
+**P4 — Never require the game to be running.** Files on disk only.
 
-**P5 — Degrade, don't block.** If planet gravity can't be extracted, use an editable table. If a
-blueprint can't be decoded, fall back to manual mass entry. A missing capability greys out one
-panel; it never prevents launch.
+**P5 — Degrade, don't block.** A missing capability greys out one panel; it never prevents launch.
 
 ---
 
-## 3. The two modes
+## 3. Mode: Plan (v1)
 
-**[OPEN — this is the main design decision.]** I recommend building **Plan** first and **Check**
-second, but they share a calculation core so the order is cheap to change.
+Confirmed as the v1 scope. Flow:
 
-### Mode A — Plan (build up from requirements)
+```
+   ① departure planet  ─┐
+                        ├─▶  required thrust  ─▶  ③ proposed configurations
+   ② ship mass  ────────┘                            (one per thruster type)
+```
 
-*"I want to move 500 t on Verdure with 1.5 g of headroom. What do I need?"*
+### 3.1 Step ② — two ways to give us mass
 
-Inputs: target mass, environment, desired acceleration or thrust-to-weight ratio.
-Output: a ranked set of thruster loadouts that satisfy it — cheapest, lightest, fewest blocks.
+**Path A — "I know the number."** Load the ship in game, read its mass, type it in. Exact, trivial,
+no unresolved research. **This is the default and always available.**
 
-This is the mode that works **today**, with zero unsolved research blockers, because the user
-supplies the mass. It's also the one that helps most at the moment you actually need help: before
-you've built the thing.
+**Path B — "Work it out for me."** Describe the ship's storage — how many of each cargo container and
+tank — and the app resolves total mass from game data.
 
-### Mode B — Check (analyse what exists)
+Research §4.3 confirms Path B is mostly free: `CargoContainer150/250/750` carry `MaxMass`
+(16 800 / 67 200 / 2 150 400 kg) and tanks carry `MaxCapacity` directly. The gap is *block* mass
+(Research §4), which is `Assumed` until the mass curve lands.
 
-*"Here's my blueprint. Where is it weak?"*
+So Path B shows: **container/tank contents = `Measured`, block masses = `Assumed`**, plus a hull mass
+the user still enters. P2 makes that honest rather than confusing.
 
-Input: a blueprint. Output: actual mass, per-axis thrust, TWR per environment, flagged weak axes.
+### 3.2 Load presets
 
-Strictly better UX — no typing — but it depends on `.vrb` blueprint decoding (Research §5), which is
-the fragile, dependency-heavy path. Building Plan first means Check becomes an *additive* feature
-rather than a prerequisite.
+**Tanks are always full. Cargo varies.** Fuel is the thing you can't choose to leave behind, so
+treating tanks as anything but full would flatter the numbers.
 
-**Recommendation: v1 = Plan. Design the UI so Check slots in as a second tab that pre-fills Plan's
-inputs.** That way the blueprint reader, when it lands, makes the existing screen better instead of
-needing a new one.
+| Preset | Cargo | Tanks |
+|---|---|---|
+| Empty | 0% | 100% |
+| Half | 50% | 100% |
+| Full | 100% | 100% |
+
+**All three are shown at once**, not toggled. The failure this app exists to prevent is the ship that
+lifts empty and strands full — you cannot see that if you have to switch between views.
+
+### 3.3 Step ③ — proposals per thruster type
+
+For each thruster type available in the current game build, propose a configuration meeting the
+requirement. One row per type, so the trade-off (count, added mass, power/fuel draw) is directly
+comparable.
+
+**Long term: mixed compositions** — e.g. atmospheric for lift-off plus ion for orbit. Deferred, but
+the core must be designed so a mixed solver is an added function, not a rewrite (Technic §4).
 
 ---
 
-## 4. Core UX decisions
+## 4. The two things that make this non-trivial
 
-### 4.1 Six axes, not one number
+These are the parts a naive calculator gets wrong, and they're the reason the app is worth building.
 
-SE2 ships are rarely symmetric and the classic failure is a ship that flies beautifully forward and
-handles like a barge laterally. The result must be **per-direction** (up/down/fore/aft/left/right),
-not a single thrust figure.
+### 4.1 Integer thruster counts → every configuration is a *range*
 
-**Decision: "Up" is privileged.** It's the axis that decides whether you leave the ground, and it's
-the one people get wrong. Up gets the headline verdict; the other five are a compact row beneath.
-
-### 4.2 Environment is a first-class selector, always visible
-
-The same ship is a different ship on Verdure vs. in orbit — and thruster *classes* differ in where
-they work at all. The environment picker (planet / atmosphere / vacuum) sits **next to the result,
-not in settings**, because changing it is the primary interaction, not configuration.
-
-**Decision: show the verdict for multiple environments simultaneously** rather than making the user
-toggle. A small matrix — environments × verdict — surfaces "fine in space, can't lift off Verdure"
-in one glance. Toggling hides exactly the comparison the user came for.
-
-### 4.3 Load states
-
-Empty vs. full cargo is the other classic trap. **Decision: mass is entered as a range or as
-dry + cargo**, and results show both endpoints. A ship that lifts empty and strands full is the
-specific failure the app should prevent.
-
-### 4.4 Data provenance is always on screen
-
-Given P1 and an alpha game, the user must be able to trust *when* the numbers came from. A
-persistent, quiet status strip:
+You cannot fit half a thruster. Rounding up to a whole number means the configuration has slack, so
+each proposal is honest about the band of ship mass it actually supports:
 
 ```
-Game data: SE2 build 2.3.0.2798 · 17,172 definitions · read 2026-08-04 14:22 · [Refresh]
+18 × Atmospheric 2.5 m     supports 500 t – 518 t     (at TWR 1.0, Verdure)
+                           ▲ your ship: 500 t — 3.6% headroom
 ```
 
-**Decision: the app detects staleness itself** (game files changed since last read) and offers a
-refresh, rather than silently serving cached numbers or forcing a re-scan every launch. Silent
-staleness would violate P1 in the exact scenario the app was built for — patch day.
+Showing the upper bound tells you how much you can grow before re-planning — genuinely useful, and
+it falls straight out of the math (Technic §4).
 
-### 4.5 Not-yet-implemented content is shown, not hidden
+### 4.2 Thrusters weigh something, and that feeds back
 
-Underwater thrusters have models but no definitions (Research §3). Rather than omitting them,
-**show them greyed with "not implemented in this build."** During alpha, "does this exist yet?" is a
-real question players have, and answering it is nearly free.
+**This is the subtle one.** Proposing 10 large thrusters adds their mass to the ship, which raises
+required thrust, which may demand more thrusters. It's a fixed point, not a division.
+
+It also has a **failure mode with no solution**: if a thruster cannot lift its own weight at the
+target gravity and TWR, *no quantity of them ever works*. The app must detect that and say so
+plainly, rather than proposing an absurd number or spinning:
+
+> **Ion 1 m can't lift itself on Verdure.** At 1 g, each unit produces 8 950 N but weighs 58 kg
+> (569 N) — it clears its own weight, but 156 of them are needed for a 500 t hull. Consider a larger
+> size.
+
+Technic §4 has the closed-form solution and the impossibility condition — it's arithmetic, not
+iteration.
+
+**Assumption to state in the UI:** proposals assume **no thrusters currently installed**. If the
+entered mass came from a ship that already has thrusters, their mass is being counted twice. A
+persistent one-line note, not a dismissible dialog.
+
+### 4.3 Environment, now fully modelled
+
+Research §3.3 found `ThrustClassesConfiguration.def` — the complete effectiveness model:
+
+| Class | Full thrust at | Zero thrust at |
+|---|---|---|
+| Atmospheric | air density ≥ 0.8 | ≤ 0.2 |
+| Ion | air density ≤ 0.2 | ≥ 0.8 |
+| Hydrogen | everywhere (`Min = -1` sentinel) | — |
+| Water | underwater only, not yet shipped |
+
+Combined with per-planet atmosphere geometry (full density to 1.08 R, zero by 1.15 R — Research
+§5.2), the app can show thrust **as a function of altitude**, not just "surface" vs "space".
+
+**Decision: v1 computes at sea level for the chosen planet** (the departure case, which is what was
+asked for), but the model supports altitude, so an altitude slider is a natural v2 addition rather
+than a redesign.
+
+### 4.4 Not-yet-implemented content is shown, not hidden
+
+Underwater thrusters have models but no definitions, and `ThrustClassesConfiguration` already
+defines a `Water` class (Research §3.3). Show them greyed: *"not implemented in this build."* During
+alpha, "does this exist yet?" is a real question, and answering it is nearly free.
+
+### 4.5 Data provenance is always on screen
+
+```
+Game data: SE2 build 2.3.0.2798 · 17,172 definitions · read 2026-08-04 14:22 · [Rebuild]
+```
+
+The app detects staleness itself (game files changed since last read) rather than silently serving
+cached numbers. Silent staleness would violate P1 in the exact scenario the app exists for: patch day.
+
+The app itself only ever reads a JSON config. A separate producer tool (`tc`) is what touches the
+game (Technic §1). Three audiences get their config three ways, and only one of them ever rebuilds:
+
+| Audience | Config source | Rebuilds? |
+|---|---|---|
+| Web users | Served by the host | Never — not their concern |
+| Desktop binary users | Bundled in the release | **Sometimes** — see below |
+| Power users / self-hosters | `tc extract` on their own install | Yes, by CLI |
+
+### 4.5.1 Should the desktop GUI rebuild at all?
+
+**Recommendation: yes, but as a thin, unglamorous "Data" section — not a headline feature.**
+
+The argument for dropping it is decoupling, and it's mostly right. But the desktop binary user is
+*precisely* the person with Space Engineers installed — they play it — and in an alpha their bundled
+config goes stale within weeks. Removing rebuild entirely sends exactly the audience with the game on
+their disk off to find a separate CLI tool. That's a real usability loss for the largest group.
+
+Since the binary already ships `tc.exe` alongside it, wiring this is small: a Data panel showing the
+current config's game build and staleness, plus a button that shells out. Keep it honest:
+
+- **Desktop-only.** The web build simply doesn't have the section — it isn't a disabled control,
+  it's absent. Different host, different capabilities.
+- **Degrades to an explanation**, never a dead button: "Space Engineers not found" or "`tc.exe` not
+  bundled with this build," with the manual CLI command shown so the user isn't stuck.
+- **Visible and cancellable, with progress.** It scans 17k files and may invoke the game's own code.
+  Pretending it's instant would be a lie, and the user must be able to distinguish it from a hang.
+- **The app stays fully usable with no game installed.** Rebuild is the *only* feature that needs SE2
+  present; its absence greys one panel and blocks nothing.
+
+The config is **plain, hand-editable JSON**. Where the app shows an `Assumed` value, the user can fix
+it inline in the UI or directly in the file — the same value, one source of truth.
 
 ### 4.6 Units
 
-**Decision: display in kN / t / m·s⁻² / g, compute in SI base units (N, kg).** Raw thrust values run
-to 15,465,370 — unreadable. Thrust-to-weight ratio is presented as a plain multiplier ("1.4×") since
-that's how players talk about it. The environment matrix shows TWR; the detail panel shows absolute
-kN.
+Display kN / t / m·s⁻² / g; compute in SI base units (N, kg). Raw thrust runs to 15 465 370 —
+unreadable. TWR shown as a plain multiplier ("1.4×"), because that's how players talk.
 
 ---
 
 ## 5. Layout sketch
 
-Single window, three regions. Deliberately not a wizard — every input is live and results recompute
-as you type.
+Single window, live recompute — not a wizard.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  ThrustersHelper SE2                                          [Plan][Check] │
-├────────────────────────┬─────────────────────────────────────────────────┤
-│  SHIP                  │   VERDICT                                        │
-│                        │                                                  │
-│  Dry mass   [ 420 ] t  │        UP        Vacuum  Verdure  Kemik  Delfos  │
-│  Cargo      [  80 ] t  │      ─────────────────────────────────────────   │
-│  ──────────            │      empty         —      2.1×    3.4×    1.6×   │
-│  Total      500 t      │      full          —      1.4×    2.2×    1.0×  ⚠│
-│                        │                                                  │
-│  THRUSTERS             │   ⚠ Delfos, fully loaded: 1.0× — no margin.      │
-│  Atmo 250   [  6 ]     │                                                  │
-│  Atmo 100   [ 12 ]     │   Other axes (Verdure, full)                     │
-│  Ion  500   [  2 ]     │   fore 1.9×  aft 0.7×⚠  left 1.1×  right 1.1× …  │
-│  [+ add thruster]      │                                                  │
-│                        │   Power draw   4 850 kW      [details ▾]         │
-│  ENVIRONMENT           │                                                  │
-│  ☑ Vacuum  ☑ Verdure   │   ── Assumed values ────────────────────────     │
-│  ☑ Kemik   ☑ Delfos    │   Verdure gravity  [ 9.81 ] m/s²   (editable)    │
-│                        │   Atmospheric falloff: not modelled — see docs   │
-├────────────────────────┴─────────────────────────────────────────────────┤
-│ Game data: build 2.3.0.2798 · 17,172 defs · read 14:22 · [Refresh]        │
-└──────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────┐
+│  ThrusterCalculator SE2                                                          │
+├─────────────────────────────┬─────────────────────────────────────────────────┤
+│  DEPARTURE                  │   REQUIRED THRUST (up, TWR 1.0)                  │
+│  Planet  [ Verdure      ▾]  │                                                  │
+│  Gravity [ 9.81 ] m/s² ⚠    │     empty    3 920 kN     half   4 610 kN        │
+│  TWR     [ 1.0  ]           │     full     5 300 kN                            │
+│  ─────────────────────────  │                                                  │
+│  SHIP MASS                  │   CONFIGURATIONS  (full load)                    │
+│  ( ) I know it:  [    ] t   │   ┌──────────────────────────────────────────┐   │
+│  (•) Work it out            │   │ Atmospheric 2.5 m   19 ×   +8.8 t  12 MW │   │
+│      Hull      [ 300 ] t ⚠  │   │   supports 528–546 t · 3.4% headroom     │   │
+│      Cargo 250 [   4 ]      │   │ Atmospheric 5 m      4 ×   +6.2 t  10 MW │   │
+│      Cargo 750 [   0 ]      │   │   supports 512–589 t · 12% headroom      │   │
+│      H2 Tank 500 [ 2 ]      │   │ Hydrogen 2.5 m       3 ×   +3.0 t  36 H2 │   │
+│  ─────────────────────────  │   │   supports 501–581 t · 14% headroom      │   │
+│  Dry    300 t               │   │ Ion 1.5 m          ✕ no thrust in atmo    │   │
+│  Cargo  269 t (full)        │   └──────────────────────────────────────────┘   │
+│  Tanks   ~2 t ⚠             │                                                  │
+│  Total  571 t               │   ⓘ Assumes no thrusters currently installed.    │
+│                             │   ⚠ = Assumed value — click to edit              │
+├─────────────────────────────┴─────────────────────────────────────────────────┤
+│ Game data: build 2.3.0.2798 · 17,172 defs · read 14:22 · [Rebuild]            │
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Points worth noting in the sketch:
+Notes on the sketch:
 
-- The **assumed-values block is part of the main result area**, not buried in settings — P2 in
-  practice. Editing gravity there immediately updates the matrix.
-- "Atmospheric falloff: not modelled" is stated plainly. When Research §8 Q1 is solved, that line
-  becomes a real modifier and the matrix gains an altitude control.
-- The matrix has an em-dash for atmospheric thrusters in vacuum rather than `0×` — "doesn't apply"
-  reads differently from "produces nothing."
+- **⚠ marks `Assumed` values inline** and they're editable in place — P2 in practice. Gravity, hull
+  mass, and block masses all carry it until Research §8 Q1/Q4 close.
+- **Ion shows a reason, not a number.** "✕ no thrust in atmosphere" is the useful answer; a `0` or a
+  blank row is not.
+- Each configuration shows **count, added mass, draw, and supported range** — everything needed to
+  choose, without a detail view.
+- Cargo/tank counts are per *block type*, matching how you actually build.
 
 ## 6. What this is deliberately *not*
 
-- **Not a blueprint editor.** Read-only against game files. (`BlueprintHelperSE2` is the project that
-  writes.) This keeps the risk profile low: we can never corrupt a save.
-- **Not an overlay or injector.** Research §1.
-- **Not a wiki//reference app.** It computes against *your* install; it doesn't document the game.
-- **Not multi-platform initially.** The `.vrb` path is Windows-only and the game is Windows-only.
-  Avalonia keeps the door open at ~zero cost, but cross-platform isn't a goal driving decisions.
+- **Not a blueprint editor.** Read-only against game files — we can never corrupt a save.
+  (`BlueprintHelperSE2` is the project that writes.)
+- **Not an overlay or injector.** Research §1: no scripting API exists.
+- **Not a wiki.** It computes against *your* install.
+- **Torque and centre-of-mass are out of scope for v1.** Thrusters are a bag per axis. Placement
+  effects are a substantially larger problem; noting it explicitly so it doesn't creep in.
+- **Six-axis analysis deferred.** Plan mode answers the departure question, which is "up". Lateral
+  axes matter for handling and belong with the Check mode that reads a real blueprint.
 
-## 7. Open questions for you
+## 7. Later
 
-1. **Plan vs. Check first** (§3) — I recommend Plan. Agree?
-2. **Optimiser scope**: should Plan actually *suggest* loadouts (search over combinations), or just
-   validate a loadout you assemble? Suggesting is the more valuable feature and the more interesting
-   problem; validating is a fraction of the work. I'd scope v1 to validate, design the core so the
-   optimiser is a pure function added later.
-3. **Planet gravity**: ship a curated editable table now (Research §5), or block on `.vrb`
-   extraction? I strongly recommend the table.
-4. **Is per-thruster placement relevant**, or is a bag of thrusters per axis enough? Placement
-   affects torque/centre-of-mass, which is a much larger problem. I'd say bag-of-thrusters for v1
-   and note torque as explicitly out of scope.
-5. **Theme** — match SE2's in-game UI palette, or a neutral desktop look? Neutral is faster and ages
-   better; SE2-flavoured feels more like a companion tool.
+- **Check mode** — load a blueprint, analyse what's actually there. Needs `.vrb` (Research §5.4).
+  Design the Plan screen so Check pre-fills its inputs, making it additive rather than a new screen.
+- **Mixed thruster compositions** (§3.3).
+- **Altitude slider** (§4.3) — the model already supports it.
+- **Six-axis breakdown**, with Check mode.

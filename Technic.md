@@ -1,255 +1,642 @@
-# ThrustersHelper SE2 — Technical Design
+# ThrusterCalculator SE2 — Technical Design
 
 Companion to [Research.md](Research.md) (what the game gives us) and [Design.md](Design.md) (what
-the app does). This document is **architecture and technical decisions**.
+the app does).
 
-Much of this is inherited from the sibling project `../BlueprintHelperSE2`, which has already paid
-for several expensive lessons. Where that's the case it's called out — those are not fresh
-decisions, they're hard-won constraints.
+Much is inherited from `../BlueprintHelperSE2`, which already paid for several expensive lessons.
+Where that's the case it's called out — those are constraints, not fresh decisions.
 
 ---
 
-## 1. The decision that drives the architecture
+## 1. The central architectural decision: producer / artifact / consumer
 
-Research §5 established that "touching the game" is **two different problems**, and conflating them
-would be the main architectural mistake available to us:
+The app splits into **two programs that never link to each other**, joined by a versioned JSON file.
 
-| | **Definition data** (`.def`) | **Save data** (`.vrb`) |
-|---|---|---|
-| Format | Plain JSON | Binary `VR3B` container |
-| Needs SE2 assemblies loaded | **No** | **Yes** |
-| Third-party dependency | None | `vrage-binary-serialization` (early, unverified) |
-| Can run in-process in an Avalonia app | **Yes** | **No** — see §3 |
-| Fragility across patches | Low | High |
-| Gives us | Thrust, power, density, resources, block catalogue | Planet gravity, blueprint grids, real ship mass |
+```
+   ┌─────────────────────────────┐          ┌──────────────────────┐
+   │  PRODUCER   (tc.exe)        │          │  CONSUMER  (GUI)     │
+   │                             │  writes  │                      │
+   │  • scan .def files          │ ───────► │  • read gamedata.json│
+   │  • decompiled/engine math   │  reads   │  • calculate         │
+   │  • resolve GUID graph       │          │  • render            │
+   │                             │ gamedata │                      │
+   │  needs: SE2 install, Win    │  .json   │  needs: nothing      │
+   └─────────────────────────────┘          └──────────────────────┘
+```
 
-**Everything the v1 calculator needs is in the left column.** That's the whole reason this project is
-tractable in a way `BlueprintHelperSE2` wasn't: the primary data path needs **no game assemblies at
-all**, so it's just JSON parsing.
+**The consumer requires nothing but the JSON file.** No Space Engineers install, no game assemblies,
+no Windows-specific API, no filesystem scanning. The producer holds *all* the mess — install
+discovery, 17k-file scanning, delta decoding, engine calls.
 
-**Decision: `.def` reading and `.vrb` reading live in separate projects, and the `.vrb` one is
-optional at runtime.** The app must build, run, and fully calculate with the `.vrb` project absent or
-failing. That's Design P5 (degrade, don't block) expressed in the project graph.
+This is the strongest available version of the decoupling, and it pays for itself several times:
+
+- **Ship a config with each release.** Users get correct numbers on first launch with no game
+  interaction at all.
+- **Users regenerate on their own schedule.** Patch day: click Rebuild, producer runs, new JSON.
+  No app update needed for a retune.
+- **Web host becomes possible** (§9). The consumer is pure computation over a data file, so it can
+  target WASM, or a server, or anything else. The desktop GUI stops being the only option.
+- **CI is trivial.** The consumer's entire test surface is "given this JSON, compute that." No game,
+  no platform, no fixtures from Keen.
+- **Failure is contained.** If the producer breaks after a patch, the app keeps working on the last
+  good JSON. Nothing at runtime depends on the fragile path.
+
+**Consequence to hold firmly: the JSON schema is the most important artifact in the project.** It's
+the real API. Design it deliberately (§3), version it (§3.3), and don't let convenience leak
+producer concerns into it.
 
 ## 2. Project layout
 
-Mirrors `BlueprintHelperSE2`'s conventions — `src/`, `.slnx`, `Directory.Build.props` — so moving
-between the two repos is frictionless.
-
 ```
-ThrustersHelperSE2/
-  Research.md  Design.md  Technic.md  README.md
+ThrusterCalculatorSE2/
+  Research.md  Design.md  Technic.md  Schema.md  README.md
+  .gitignore                          ignores **/gamedata.json and Keen .def copies
+  tests/fixtures/synthetic-gamedata.json    committed, obviously fake (§7.1)
   src/
-    ThrustersHelperSE2.slnx
+    ThrusterCalculatorSE2.slnx
     Directory.Build.props
-    ThrustersHelper.Core/          net9.0          pure domain + math. no deps.
-    ThrustersHelper.GameData/      net9.0          .def JSON reader + GUID index. no game asms.
-    ThrustersHelper.Vrage/         net9.0-windows  OPTIONAL. .vrb / game assemblies. isolated.
-    ThrustersHelper.Cli/           net9.0-windows  headless entry point + subprocess host
-    ThrustersHelper.Gui/           net9.0-windows  Avalonia
-    ThrustersHelper.Core.Tests/    net9.0          green with no SE2 installed
-    ThrustersHelper.GameData.Tests/net9.0          green with no SE2 installed (fixtures)
+
+    ── consumer side ──
+    ThrusterCalculator.Model/            net9.0  JSON schema types + (de)serialization
+    ThrusterCalculator.Core/             net9.0  domain + math. depends on Model only.
+    ThrusterCalculator.Core.Tests/       net9.0  green on a clean clone, no SE2
+
+    ── producer side (needs an SE2 install at runtime) ──
+    ThrusterCalculator.Extraction/       net9.0  .def scan → Model
+    ThrusterCalculator.Extraction.Tests/ net9.0  synthetic .def fixtures (§7.1)
+    ThrusterCalculator.Cli/              net9.0  tc.exe — the producer
+
+    ── frontend ──
+    ThrusterCalculator.Gui/              net9.0  Avalonia. Model + Core only.
+
+    (ThrusterCalculator.Engine/ — net9.0-windows, deliberately NOT created. §2.3)
 ```
 
-Reference direction is strictly one-way. Nothing references the GUI; `Core` references nothing.
+**Every project is plain `net9.0`, with no Windows-specific TFM anywhere.** That falls out of
+§10.2.1: because the mass formula was transcribed rather than invoked, *nothing loads SE2's
+assemblies*, so nothing needs `net9.0-windows` or `UseWPF`. The producer still expects a Windows
+machine in practice — that's where the game installs — but it uses no Windows-only API, only
+Windows-shaped default paths.
+
+Two things this buys, both worth protecting:
+
+- `Extraction.Tests` (net9.0) can reference `Extraction`. Under the earlier plan it couldn't — a
+  net9.0 project cannot reference a net9.0-windows one.
+- The consumer half stays trivially WASM-eligible (§9) rather than needing to be untangled later.
+
+`TcWindowsTargetFramework` is still defined in `Directory.Build.props` but unused, reserved for
+`Engine` if it is ever created.
+
+Reference graph — note the **absence** of any arrow from `Gui` into the producer side:
 
 ```
-        Core  ◄── GameData ◄── Gui
-          ▲         ▲           │  (spawns, does not link)
-          └── Vrage ┘           ▼
-                               Cli
+   Model ◄── Core ◄── Gui
+     ▲                 │ spawns tc.exe as a child process (no assembly reference)
+     │                 ▼
+     └── Extraction ◄── Cli ──► Engine
 ```
 
-### 2.1 `ThrustersHelper.Core` — pure
+`Gui` references `Cli` only with `ReferenceOutputAssembly="false"`, purely to force build ordering
+and to copy `tc.exe` into the output — exactly the pattern `BlueprintHelperSE2` uses. **No producer
+type is ever visible to the GUI.**
 
-Domain model and math. **No Avalonia, no SE2, no filesystem, no JSON.** Everything unit-testable on a
-machine with no game installed.
+### 2.1 `Model` — the contract
 
-Contents: `Thruster`, `ThrustClass`, `Environment` (gravity + atmosphere), `ShipMass`,
-`Direction`/`Axis`, `ThrustBudget`, the TWR/acceleration solver, and later the loadout optimiser.
+Plain DTOs plus `System.Text.Json` config. No logic, no I/O, no dependencies. Deliberately its own
+project rather than living in `Core`, because both sides depend on it and neither should depend on
+the other.
 
-Critically, Core also owns the **`Provenance` type** implementing Design P2 —
-`Measured | Derived | Assumed` travels *with* each value through the calculation rather than being
-reconstructed at the UI layer. If provenance is bolted on at the view level it will drift and lie;
-attached to the value it cannot.
+### 2.2 `Core` — pure
 
-Core defines the interfaces it needs (`IGameDataSource`, `IEnvironmentCatalog`) and never the
-implementations. This is what makes the frontend genuinely decoupled — the GUI can be driven by an
-in-memory fake with no game present, which is also how we'll develop it.
+Domain types and math (§5). Depends on `Model`, nothing else. **No Avalonia, no SE2, no filesystem,
+no Windows API.** Fully testable, and WASM-compatible by construction (§9).
 
-### 2.2 `ThrustersHelper.GameData` — the primary data path
+Owns `Provenance` (`Measured | Derived | Assumed`, Design P2) — which now travels *in the JSON*
+as well as through the calculation, so the consumer knows the confidence of every number without
+asking the producer.
 
-Reads `.def` JSON. Plain `System.Text.Json`, no game assemblies, no third-party packages.
+### 2.3 `Extraction` / `Engine` / `Cli` — the producer
 
-Responsibilities:
-1. **Install discovery** — parse `libraryfolders.vdf`, locate app `1133870` (Research §6). Manual
-   override always available. Reuse `BlueprintHelperSE2`'s `Se2Installation.cs`.
-2. **Index building** — walk `GameData\Vanilla\Content\`, parse the `$Bundles`/`$Type`/`$Value`
-   envelope, build the **GUID → definition** map (Research §2.2).
-3. **Projection** — resolve the thruster graph into Core's domain types.
+`Extraction` does install discovery (`libraryfolders.vdf`, app `1133870`, Research §6), walks
+`Content\`, builds the GUID index, resolves the graph, and emits `Model` objects.
 
-`BlueprintHelperSE2` already has `BlockDefinitionIndexBuilder` / `BlockDefinitionIndex` /
-`BlockDefinitionIndexStore`. **Review those before writing new ones** — but note theirs sits in the
-`Vrage` project because it went through game assemblies. Ours doesn't need to, which should make it
-both simpler and more robust.
+`Engine` is the quarantined optional piece (§10). **Don't create it until the spike justifies it.**
 
-### 2.3 `ThrustersHelper.Vrage` — quarantined
-
-Only project permitted to touch SE2 assemblies. Windows-only, `net9.0-windows`, `<UseWPF>true</UseWPF>`
-(§3.1). Needed **only** for planet gravity and blueprint grids — both deferred past v1.
-
-**Decision: do not create this project until a feature actually requires it.** The layout above
-reserves the slot. Creating it early invites the calculator to quietly grow a hard dependency on the
-fragile path, which is exactly the failure mode §1 exists to prevent.
+`Cli` (`tc.exe`) is the producer host and the only thing that needs to exist for a rebuild.
 
 ---
 
-## 3. Inherited constraint: game assemblies cannot live in the GUI process
+## 3. The artifact: `gamedata.json`
 
-`BlueprintHelperSE2` discovered this the hard way. Its GUI **shells out to `bph.exe`** rather than
-loading engine types in-process (`ExternalGridDecoder`, plus an MSBuild target copying the CLI into
-a `cli/` subfolder of the GUI output).
+> **Full specification: [Schema.md](Schema.md).** That document is the contract, written to stand
+> alone (it suits a wiki page). This section covers only the decisions behind it; the field-by-field
+> reference lives there, along with the worked example. The committed synthetic fixture is
+> `tests/fixtures/synthetic-gamedata.json`.
+
+### 3.1 What goes in
+
+Everything the calculator needs, fully resolved — no GUIDs, no cross-references, no engine concepts:
+
+- **Thrusters**: id, display name, class, size, thrust (N), consumed resource + rate, density,
+  occupied cells.
+- **Thrust classes**: the ramp endpoints from `ThrustClassesConfiguration.def` (Research §3.3).
+- **Planets**: name, surface gravity, atmosphere geometry (`affectDistance`,
+  `constantAffectDistance`), milestone.
+- **Cargo containers / tanks**: capacity, density, occupied cells.
+- **Densities / resources**: the small shared lookup tables.
+- **Metadata**: schema version, game build, fingerprint, per-`$Type` counts (§7.2), warnings.
+
+Two shape decisions, both settled in Schema.md and worth restating because they're easy to get wrong:
+
+- **Store inputs, not outputs.** Block mass is *not* in the file. `occupiedCells`,
+  `massCurveModifier` and `minBlockMass` are, and `Core` computes mass from them (§5.4). A derived
+  value stored beside its inputs drifts; the formula is three lines and belongs in one tested place.
+- **Provenance is sparse, not per-value.** Values are plain scalars, implicitly `measured`. Only
+  non-measured fields are named in the owning object's `provenance` map. Wrapping every scalar in
+  `{value, provenance}` would double the file size and destroy hand-editability (R5) for annotation
+  that is absent on the large majority of fields.
+
+```jsonc
+{ "id": "verdure", "surfaceGravity": 9.81, "gravityAffectDistance": 1.5,
+  "provenance": { "surfaceGravity": "assumed" } }
+```
+
+Note `unknown` is a distinct fourth value from `assumed`, and requires the value to be `null` — "we
+have no idea" and "here's our best guess" drive different UI and different user action.
+
+### 3.2 Calculation models: parameterise, don't embed formulas
+
+You raised storing calculation models in the config. Worth being precise, because there are three
+levels and only one is right:
+
+| | Approach | Verdict |
+|---|---|---|
+| (a) | **Data only** — values and tables; all math hardcoded in `Core` | Too rigid: a retuned curve needs an app release |
+| (b) | **Named models + parameters** — `{"model":"powerCurve","exponent":0.72,"min":5}`; `Core` implements a small closed set of named models | ✅ **This one** |
+| (c) | **Formula strings** evaluated at runtime | Over-engineered; buys nothing real |
+
+Why (c) loses despite being tempting: the argument for it is "if Keen changes the formula's *shape*,
+users regenerate and stay correct without an app update." But the producer has to *read* that new
+shape out of the engine — so the producer needs new code anyway. You cannot skip shipping a release.
+Meanwhile (c) costs an expression evaluator, an eval surface in a file users hand-edit, and math
+that can't be unit-tested statically.
+
+(b) gets the real benefit — **retuned parameters flow through with no release** — which is the
+common case in an alpha, since `MassCurveModifier` and `MinBlockMass` already live in `.def` and will
+change far more often than the formula's shape. If the shape genuinely changes, that's a code change
+and *should* be, because it needs new tests.
+
+So: `Core` owns a small registry of named models (`linearRamp`, `powerCurve`, …); the JSON selects
+and parameterises them. An unknown model name is a clear, actionable error — not a silent fallback.
+
+### 3.3 Versioning and trust
+
+- **`schemaVersion`** — consumer refuses to load a major mismatch and says so plainly. Configs
+  outlive the app version that wrote them; a user may hand a newer config to an older app.
+- **`gameBuild`** — max observed `$Bundles` version (Research §2.3), shown in the UI.
+- **`sourceFingerprint`** — hash over `(relative path, size, mtime)` of `Content\**\*.def`. Metadata
+  only: a directory enumeration, not 17k reads. Cheap enough to check on every launch, which is what
+  makes Design §4.5's staleness banner honest rather than decorative.
+- **Hand-editable on purpose.** It's where `Assumed` values (planet gravity, block masses) live until
+  better sources land. Users correcting them shouldn't have to wait for us.
+
+### 3.4 Distribution: the repo never contains real game data
+
+**Decision: `gamedata.json` is not committed.** It is a build output, not source. `.gitignore`
+carries `**/gamedata.json`, and the same reasoning as the `.def` files applies — we don't
+redistribute Keen's numbers from the repo.
+
+Who gets a config, and how:
+
+| Audience | How they get `gamedata.json` |
+|---|---|
+| **Power users / self-hosters** | Run `tc extract` against their own install |
+| **Web users** | The server already hosts one; they never think about it |
+| **Desktop binary users** | Bundled into the release artifact at packaging time |
+
+The three paths converge on the same file, produced by the same tool.
+
+### 3.5 Consequence: releases cannot be fully automated on CI
+
+If the repo has no `gamedata.json`, something must produce one for the desktop release — and
+**GitHub Actions runners don't have Space Engineers installed.** So packaging a binary requires a
+step on a machine with the game.
+
+Options, in order of preference:
+
+1. **Manual release step.** Dev runs `tc extract` locally, attaches the output to the release / drops
+   it into the packaging input. Simple, honest, one command. **Recommended for now.**
+2. **First-run fetch.** Ship the binary without a config; on first launch it downloads from the same
+   host serving the web version, falling back to a bundled copy. Elegant — the hosting already exists
+   in this model — but adds a network dependency and an offline story to design. Worth revisiting if
+   releases become frequent.
+3. Self-hosted runner with SE2 installed. Over-engineering for this project's size.
+
+Either way: **CI builds and tests the code; it does not build the data.** Keep that boundary explicit
+so nobody wastes time trying to make the extraction job run on a hosted runner.
+
+---
+
+## 4. Inherited constraint: game assemblies cannot live in the GUI process
+
+`BlueprintHelperSE2` learned this the hard way — its GUI shells out to `bph.exe` rather than loading
+engine types in-process.
 
 The reason is visible in the install: **SE2's `Game2\` folder ships its own `Avalonia.Base.dll`,
-`Avalonia.Controls.dll`, and the rest** — Keen built SE2's UI on Avalonia too. An Avalonia app that
-loads SE2's assemblies into its own `AssemblyLoadContext` gets a version collision between our
-Avalonia and theirs. Add SE2's demand for `Microsoft.WindowsDesktop.App`, and in-process hosting is a
-losing fight.
+`Avalonia.Controls.dll` and the rest** — Keen built SE2's UI on Avalonia too. An Avalonia app loading
+SE2's assemblies hits a version collision. Add SE2's demand for `Microsoft.WindowsDesktop.App` and
+in-process hosting is a losing fight.
 
-**Decision: same pattern here, if and when we need `.vrb` at all.** `Gui` spawns `Cli` as a child
-process and exchanges JSON over stdout. `Gui` references `Cli` with
-`ReferenceOutputAssembly="false"` purely to force build ordering.
+Under the producer/consumer split this stops being a workaround and becomes **structurally
+inevitable**: the GUI couldn't reference the engine even if it wanted to. The Rebuild button spawns
+`tc.exe`, which writes JSON and exits. Batch, not IPC chatter.
 
-The happy consequence of §1: **v1 never pays this cost**, because `GameData` is pure JSON and runs
-in-process quite happily.
+### 4.1 Target frameworks
 
-### 3.1 Target framework: net9.0, not net10.0
-
-`Directory.Build.props` pins:
+`src/Directory.Build.props` is the single flip point:
 
 ```xml
-<ThTargetFramework>net9.0</ThTargetFramework>
-<ThWindowsTargetFramework>net9.0-windows</ThWindowsTargetFramework>
+<TcTargetFramework>net9.0</TcTargetFramework>
+<TcWindowsTargetFramework>net9.0-windows</TcWindowsTargetFramework>   <!-- reserved, unused -->
 <AvaloniaVersion>12.1.1</AvaloniaVersion>
 ```
 
-.NET 10 SDK is installed on this machine and net9 is out of support, so this needs justifying:
-`SpaceEngineers2.runtimeconfig.json` declares `"tfm": "net9.0"` with `Microsoft.NETCore.App 9.0.0`
-and `Microsoft.WindowsDesktop.App 9.0.0`. Matching the runtime the game was built and tested against
-removes a variable from an already-fragile interop story.
+net9 (not net10, though the SDK is installed) because `SpaceEngineers2.runtimeconfig.json` declares
+`"tfm": "net9.0"` with `Microsoft.NETCore.App 9.0.0` and `Microsoft.WindowsDesktop.App 9.0.0`.
+Matching the runtime the game was built against removes a variable.
 
-**However** — that reasoning only truly binds `Vrage` and `Cli`. Since our core path has no game
-interop, there's a legitimate case for `Core`/`GameData`/`Gui` on **net10.0**, leaving only the
-quarantined projects on net9. **[OPEN]** I lean toward pinning everything to net9.0 for now to match
-the sibling project and keep one flip point; revisit if we want .NET 10 features. Either way it's a
-one-line change in `Directory.Build.props`.
+Strictly, that reasoning now binds only a hypothetical `Engine` — nothing else loads game assemblies
+(§2). It's kept project-wide for a single flip point and to match the sibling repo. **`Model` and
+`Core` must stay platform-neutral regardless** — that's what keeps the web target open (§9). Don't
+let a Windows dependency drift into them.
 
 ---
 
-## 4. The definition index: parsing, caching, staleness
+## 5. The sizing math
 
-### 4.1 Tolerant parsing is a hard requirement
+Lives in `Core`, pure and tested.
 
-Alpha game, 17,172 files, schemas that change per patch (Research §2.3 shows definitions stamped
-from six different builds *in one install*). Non-negotiable rules:
+### 5.1 Thruster self-weight is a fixed point with a closed form
 
-- **Key off `$Type`, never filename.** Research §3 caught this: hydrogen thrusters are in
-  `*_HydrogenThrusterDefinition.def` but carry the same `ThrusterDefinitionObjectBuilder` type as
-  everything else. Filename-based dispatch would silently drop them.
-- **Unknown `$Type` → skip silently.** We care about a handful of types out of hundreds.
-- **Unknown *field* on a known type → ignore, don't fail.** Forward compatibility.
-- **Missing expected field → `null`, recorded as a warning, surfaced in a diagnostics view.** Not an
-  exception. `ThrustClass` is already legitimately absent on hydrogen.
-- **A malformed file must never prevent startup.** Log it, skip it, keep going.
+Naive `n = requiredThrust / thrustPerUnit` is wrong: adding thrusters adds mass, raising the
+requirement (Design §4.2).
 
-The failure mode to design against is *silent* data loss — dropping a thruster family and showing a
-confident wrong answer. Hence: the index records counts per `$Type`, and the app surfaces
-"9 thrusters found" so a drop from 9 to 5 after a patch is visible.
+With `M` = ship mass excluding thrusters, `T` = thrust per unit, `m` = mass per unit, `g` = surface
+gravity, `R` = target TWR, `E` = environmental effectiveness ∈ [0,1] (§5.3):
 
-### 4.2 Cache with a cheap staleness check
+```
+        n·T·E  ≥  R·g·(M + n·m)
+   n·(T·E − R·g·m) ≥  R·g·M
 
-Walking 17k files on every launch is wasteful. Two-tier, following `BlueprintHelperSE2`'s
-ship-a-default-index-overridable-in-`%LOCALAPPDATA%` pattern:
+              R·g·M
+   n  ≥  ─────────────────         n = ⌈ … ⌉
+          T·E − R·g·m
+```
 
-1. **Shipped index** — a `thruster-index.json` committed to the repo, built from a known game build.
-   Guarantees the app is useful on first launch and testable with no game installed.
-2. **User index** — built from the local install on first run, cached to
-   `%LOCALAPPDATA%\ThrustersHelperSE2\`, keyed by a **fingerprint** of the game data.
+**The denominator is the whole story.** If `T·E − R·g·m ≤ 0` the thruster cannot carry its own weight
+at this gravity and TWR, and **no `n` is a solution** — the naive formula would return a confident
+positive by dividing by a negative, or spin forever if solved iteratively. Guard it explicitly and
+report it as Design §4.2 describes.
 
-Fingerprint = hash over `(relative path, file size, last-write-time)` of `Content\**\*.def`, **not**
-file contents — metadata-only keeps it to a directory enumeration rather than reading 17k files.
-Cheap enough to run on every launch, which is what makes Design §4.4's staleness banner honest.
+### 5.2 The supported range falls out of the same formula
 
-Store the observed `$Bundles` versions alongside the cache so the UI can show "build 2.3.0.2798".
+```
+   M_max  =  n·(T·E − R·g·m) / (R·g)
+```
 
-### 4.3 Scope the walk
+`[M, M_max]` is the range shown per configuration (Design §4.1). Worked example — 500 t hull,
+Atmospheric 2.5 m (`T` = 287 136 N, `m` = 464 kg), `g` = 9.81, `R` = 1, `E` = 1:
 
-We do not need all 17k files. Restrict to the `$Type`s we consume — thruster definitions, powerable
-block definitions, density, resource types, and the block templates. But **discover them by scanning
-and filtering on `$Type`**, not by hardcoding paths, per Research §2.2 (folder layout is a human
-convenience, not the data model).
+```
+   n ≥ 9.81·500 000 / (287 136 − 9.81·464) = 4 905 000 / 282 584 = 17.36  →  n = 18
+   M_max = 18 · 282 584 / 9.81 = 518 559 kg
+```
+
+Check: 18 × 287 136 = 5 168 448 N vs (500 000 + 18×464) × 9.81 = 4 986 933 N → TWR 1.036. ✓
+
+Arithmetic, not iteration. Note `m` currently carries `Assumed` provenance, so **every
+configuration's range inherits it**.
+
+### 5.3 Environmental effectiveness
+
+From `ThrustClassesConfiguration.def` (Research §3.3), per class, given air density `d`:
+
+- `MinThrustAirDensity == -1` → `E = 1` always (hydrogen: no falloff).
+- Otherwise `E` ramps between `MinThrustAirDensity` (E=0) and `MaxThrustAirDensity` (E=1), clamped.
+  **`Min` may be numerically greater than `Max`** — that's how ion is expressed (full thrust at *low*
+  density). Interpolate on the interval regardless of ordering; never assume `Min < Max`.
+- `WaterOnly` classes excluded unless submerged (not modelled — water unshipped).
+
+Air density comes from the planet's atmosphere geometry: `1.0` up to `ConstantAffectDistance`
+(1.08 R), ramping to `0` at `AffectDistance` (1.15 R). v1 evaluates at the surface; the function
+takes altitude so Design's v2 slider is free.
+
+Both ramps are assumed linear, flagged for in-game verification (Research §8 Q3). Both are §3.2
+named models, so a different shape is a config change plus a `Core` model, not a rewrite.
+
+### 5.4 Block mass
+
+Transcribed from the decompiled engine (Research §4.0), exact:
+
+```csharp
+public static float BlockMass(int occupiedCells, float massCurveModifier, float minBlockMass)
+    => occupiedCells <= 0
+        ? minBlockMass
+        : (float)(massCurveModifier * Math.Sqrt(occupiedCells)
+                  * Math.Log10(occupiedCells) + minBlockMass);
+```
+
+Match the engine's edge cases exactly, and unit-test them:
+
+- **No `Density` → `minBlockMass`.** Not an error, not zero.
+- **`V == 1` → `minBlockMass`**, because `log₁₀(1) = 0`. Falls out naturally, but assert it so a
+  future "optimisation" doesn't break it.
+- **Compute in `double`, cast to `float` at the end** — the engine does, and matching the rounding
+  matters when we compare against in-game values.
+
+Provenance is `Derived`: our formula, over `Measured` inputs (`MassCurveModifier` and `MinBlockMass`
+from `.def`) plus a recovered `occupiedCells` (§5.5).
+
+### 5.5 The `V` table
+
+`V` (occupied 25 cm cells) is voxelized from physics colliders and cached in binary
+`contentcache.vrb` — not in any `.def` (Research §4.0.1). Rather than decode that, **store `V` per
+block in `gamedata.json`** as a small integer table.
+
+All twelve thruster values were recovered exactly by solving the formula against known in-game masses
+(Research §4.0). The same trick extends to containers and tanks.
+
+Why this is stable rather than a hack:
+
+- `V` changes **only if Keen changes a block's collision mesh** — far rarer than a stat retune.
+- `MassCurveModifier` and `MinBlockMass` still come from `.def`, so **retuning tracks automatically**.
+- A stale `V` is **self-announcing**: computed mass stops matching what the game shows, and `tc verify`
+  can check it directly.
+
+Mark the table `Derived` with a note recording how each value was obtained. If a block's `V` is
+missing, the app must say "mass unknown for this block" rather than silently substituting zero — an
+absent thruster mass would quietly break the self-weight solver (§5.1).
+
+### 5.6 Designed for mixed compositions later
+
+Single-type sizing is closed-form; mixed is a small integer optimisation (minimise added mass subject
+to the thrust constraint). Keep the solver a **pure function over a set of thruster types** returning
+candidate configurations, so the mixed solver is a sibling sharing the same constraint evaluation —
+not a rewrite (Design §3.3).
 
 ---
 
-## 5. Frontend: Avalonia, decoupled
+## 6. Frontend
 
-- **Avalonia 12.1.1** (matching the sibling project), Fluent theme, Inter fonts.
-- **`CommunityToolkit.Mvvm`** for observable properties and commands. No heavier framework —
-  no Prism, no ReactiveUI, no DI container until something demands one.
-- **Strict MVVM, and the decoupling must be real**: ViewModels depend only on `Core` abstractions.
-  `Gui` may reference `GameData` for composition-root wiring, but no ViewModel takes a `GameData`
-  type. The test of success: **the whole GUI runs against an in-memory fake data source with SE2 not
-  installed.** Build that fake early — it's the development path, not just a test fixture.
-- **No code-behind logic.** Views bind; they don't compute.
-- Calculations are synchronous and fast (arithmetic over a handful of thrusters), so results
-  recompute on property change with no async machinery. Only **index building** is async, with
-  progress — it's the one slow operation.
-
-### 5.1 Why a CLI project at all
-
-Three reasons, in order: (1) it's the subprocess host if `.vrb` ever lands (§3); (2) it makes the
-data-extraction path scriptable, which is how we'll answer Research §9's schema-dump question and
-diff definitions across patches; (3) it keeps `GameData` honest — if it's usable headlessly, it's
-genuinely decoupled from the UI.
+- **Avalonia 12.1.1**, Fluent theme, Inter fonts.
+- **`CommunityToolkit.Mvvm`** for observable properties and commands. Nothing heavier until something
+  demands it.
+- ViewModels depend on `Core` and `Model` only. The producer split makes this structural rather than
+  a convention — there is no `GameData` type to accidentally reach for.
+- Development runs against a **hand-written `gamedata.json` fixture**, so the GUI is buildable and
+  demoable before `Extraction` exists at all. That's now trivially true rather than requiring a fake
+  data-source abstraction.
+- **No logic in code-behind.** Views bind.
+- Calculations are closed-form arithmetic; recompute synchronously on property change. Only the
+  producer subprocess is async, with progress.
 
 ---
 
-## 6. Testing
+## 7. Testing
 
-- `Core.Tests` — the calculation math. Pure functions, no I/O, fast. This is where correctness lives.
-- `GameData.Tests` — parsing, against **committed fixture `.def` files** copied from a real install
-  (they're small JSON documents; the thruster def is 396 bytes). Includes deliberately malformed and
-  unknown-`$Type` fixtures to prove §4.1's tolerance rules.
-- **Both suites must run green on a machine with no SE2 installed**, matching the sibling project's
-  rule. Anything requiring a live install is a manual/integration concern, not CI.
-- A useful extra: a test that parses the *real* install if present and asserts invariants (≥1
-  thruster per known family, all thrust values > 0), skipped when absent. That's the canary for
-  "the game patched and broke our assumptions."
+- `Core.Tests` — the math (§5). Pure functions, fast. Where correctness lives.
+- `Extraction.Tests` — parsing, against **synthetic fixtures** (§7.1).
+- Both green on a clean clone with no SE2 installed.
+- `tc verify` — on-demand invariant checks against a real local install (≥1 thruster per known
+  family, all thrust > 0, every referenced GUID resolves). The canary for "the game patched and broke
+  our assumptions," available without committing Keen's files.
 
-## 7. Sequencing
+### 7.1 Fixtures: synthetic and committed, real data never
 
-1. **Schema dump script** (Research §9) — walk all `.def`, group by `$Type`, dump distinct schemas.
-   Answers several open questions at once and tells us exactly which types the reader must support.
-   Throwaway; do it before designing the parser.
-2. `Core` domain types + TWR math, with tests. No I/O.
-3. `GameData` — install discovery, index, thruster projection, with fixture tests.
-4. `Gui` skeleton against the **fake** data source. Validates the decoupling early.
-5. Wire `GameData` into the GUI; add the staleness/provenance strip.
-6. Curated editable gravity table (Design §7 Q3).
-7. *Then* re-evaluate: optimiser, `.vrb` blueprint import, atmospheric falloff.
+Neither Keen's `.def` files nor a real `gamedata.json` is committed. That collides with "tests green
+on a clean clone / on CI," and the resolution is the same on both sides of the split:
 
-Steps 1–3 have **no unresolved research blockers**. The unknowns (mass curve, falloff, planet
-gravity) all sit behind explicit `Assumed`-provenance values, which is precisely why Design P2 is
-load-bearing rather than decorative.
+| Kind | Committed? | Purpose |
+|---|---|---|
+| **Synthetic `.def` fixtures** — hand-written JSON in the real envelope shape, our own GUIDs and numbers | **Yes** | `Extraction.Tests`: envelope handling, `$Type` dispatch, missing `ThrustClass`, malformed files, unknown types |
+| **Synthetic `gamedata.json`** — small, obviously-fake, hand-authored | **Yes** | `Core.Tests` + GUI development. The consumer's whole world |
+| **Real `.def` / real `gamedata.json`** | **No** — gitignored | Local verification only; tests skip when absent |
 
-## 8. Open technical questions
+**Synthetic, not "old or modified real."** The instinct to commit a stale real config for testing is
+right in spirit but wrong in detail, for four reasons:
 
-1. **net9 vs net10** for the non-interop projects (§3.1). Low stakes, one line.
-2. **Reuse vs. rewrite** of `BlueprintHelperSE2`'s `Se2Installation` / `BlockDefinitionIndex*` — copy
-   the files, or extract a shared package? Two small projects don't justify a shared package yet;
-   I'd copy and accept the duplication, revisiting if a third project appears.
-3. **Fixture licensing** — committing Keen's `.def` files as test fixtures. They're tiny config
-   documents, but if this ever goes public, consider hand-authored equivalents instead.
-4. **Does anything actually need `Vrage`?** If the curated gravity table (Design §7 Q3) is accepted
-   and mass stays user-entered, v1 may ship with no game-assembly dependency whatsoever — which
-   would make this dramatically more robust than the sibling project. Worth protecting.
+1. **Still Keen's numbers.** Age doesn't change the redistribution question — it just makes it less
+   defensible, not more.
+2. **Non-deterministic tests.** A real config is a snapshot of a moving game. Tests asserting
+   "18 thrusters needed" would break on a retune that has nothing to do with our code.
+3. **Can't cover what we need.** The interesting cases aren't in real data: a thruster that *can't
+   lift its own weight* (§5.1's impossibility guard), a fifth thrust class, a planet with no gravity
+   entry, `Min > Max` ramp ordering, a truncated file. Synthetic fixtures encode all of these.
+4. **Someone will mistake it for real.** A file called `gamedata.json` in the repo *will* eventually
+   be shipped or trusted by accident.
+
+So make it structurally unmistakable:
+
+- Name it `tests/fixtures/synthetic-gamedata.json` — **not** `gamedata.json`, so the `.gitignore`
+  rule for the real file can't accidentally cover it, and nobody confuses the two.
+- Give it a sentinel `"gameBuild": "0.0.0-synthetic"` and `"provenance": "synthetic"` at the root.
+- Round, obviously-invented numbers (thrust `100000`, mass `1000`) — never real values.
+- Add a CI check that fails if any file matching the real-config shape lands in the repo.
+
+Small enough to read in one screen: three or four thrusters, two planets, one container, one tank.
+
+### 7.1.1 What CI can and cannot catch
+
+Worth being explicit, because it's the real cost of this decision:
+
+| | Covered by CI? |
+|---|---|
+| Math correctness (§5) | ✅ Synthetic config, fully deterministic |
+| Parser tolerance (§7.2) | ✅ Synthetic `.def` fixtures |
+| Schema round-trip, `Model` serialization | ✅ |
+| Fixture still matches current schema | ✅ — validate on every run, catches schema drift |
+| **"Keen changed the game data format"** | ❌ **Never.** No SE2 on the runner |
+
+That last row is a genuine gap and no fixture strategy closes it. The mitigation is human and
+manual: on patch day, run `tc dump-schemas` and diff against the previous output, plus `tc verify`
+for the invariant checks (§7). Budget for that as a routine maintenance action rather than hoping CI
+will catch it.
+
+### 7.2 Tolerant parsing is a hard requirement
+
+Alpha game, 17 172 files, schemas stamped from a dozen builds in one install (Research §2.3):
+
+- **Key off `$Type`, never filename.** Research §3 caught this — hydrogen thrusters live in
+  `*_HydrogenThrusterDefinition.def` but carry the standard `ThrusterDefinitionObjectBuilder` type.
+  Filename dispatch would silently drop a third of the catalogue.
+- **Unknown `$Type` → skip silently.** We consume a handful of hundreds.
+- **Unknown field on a known type → ignore.** Forward compatibility.
+- **Missing expected field → `null` + recorded warning**, not an exception. `ThrustClass` is already
+  legitimately absent on hydrogen.
+- **A malformed file must never abort extraction.**
+
+The failure mode to design against is *silent* loss — dropping a thruster family and producing a
+confident wrong config. So the artifact records **counts per `$Type`**, and the UI surfaces
+"12 thrusters found": a drop to 8 after a patch becomes visible.
+
+### 7.3 Shallow delta decoding
+
+Planet data is delta-encoded (Research §2.4, §5.2). We do **not** implement engine inheritance
+semantics. The payloads sit inline in the `Changed` array as objects carrying their own `$Type`, so a
+shallow reader — scan `Changed`, match `$Type`, take the fields — extracts `GravityGenerator` and
+`AtmosphereGenerator` without the full machinery. That's how Research §5.2's numbers were obtained.
+Hold that boundary.
+
+Block templates need only simple fallback: field absent → look at the
+`Templates\Blocks\BaseDefinitions\` parent (Research §2.4).
+
+---
+
+## 8. Sequencing
+
+1. **`tc dump-schemas`** — walk all `.def`, group by `$Type`, emit distinct field sets. Answers
+   Research §8 Q6–Q8 at once and becomes the **patch-diffing tool** for every future update.
+2. **`Model`** — design the schema (§3). It's the contract; do it before either side.
+3. **`Core`** — domain, effectiveness curve, sizing solver (§5), against a hand-written JSON. Tests.
+4. **`Extraction` + `tc extract`** — produce a real `gamedata.json`. Commit the first output.
+5. **`Gui`** — against the committed JSON. Validates the split end-to-end.
+6. Rebuild button wiring: GUI spawns `tc.exe`, progress, staleness banner.
+7. Then: mixed compositions, altitude slider, Check mode, web target.
+
+**No unresolved research blockers remain.** The mass spike that used to be step 7 is done
+(§10.2.1) — its output is 3 lines of arithmetic in step 3 and an integer table in step 4.
+
+---
+
+## 9. Web host later — what it requires
+
+The producer/consumer split makes this genuinely reachable rather than aspirational. To keep it open,
+two rules, both cheap to follow now and expensive to retrofit:
+
+1. **`Model` and `Core` stay platform-neutral.** No Windows TFM, no `System.IO` in the calculation
+   path, no P/Invoke. Anything needing the filesystem belongs in the producer.
+2. **The consumer treats the config as an opaque asset**, not a file path — load from a stream. Then
+   "read from disk" and "fetch over HTTP" are the same code.
+
+Given those, options later: Avalonia targets WASM via `Avalonia.Browser`, so the *same* GUI could
+ship to the web with a different host; or a separate web frontend consuming `Core` compiled to WASM;
+or a server-side API. The producer stays a desktop tool — it needs the game install — so the flow
+becomes: run `tc` locally, upload or host the JSON, anyone uses the web calculator.
+
+Not committing to any of this now. Just not foreclosing it.
+
+---
+
+## 10. Engine hosting — what it is, and what it would buy
+
+### 10.1 The idea
+
+Load SE2's own .NET assemblies into a process we control and **call the game's code**, rather than
+reimplementing it. The game is managed C#, ships its assemblies, and is **not obfuscated**.
+
+Needed for exactly one thing: **block mass**. Everything else is plain JSON (Research §3.3, §4.3).
+
+### 10.2 What the game actually does — verified by metadata inspection
+
+Via `MetadataLoadContext` over `Game2.Simulation.dll` (metadata only, no code executed):
+
+```
+CubeBlockDefinition
+    [prop]   Single                     Mass                ← computed, never serialized
+    [prop]   CubeBlockMassConfiguration MassConfiguration   ← MinBlockMass = 5
+    [prop]   BlockSizeDefinition        RelativeBlockSize
+    [method] void                       ComputeMassAndHP()  ← instance, void
+
+CubeBlockDensityDefinition
+    [prop]   Single                     MassCurveModifier   ← 7 / 11 / 20 / 35
+```
+
+Two consequences:
+
+1. **`Mass` has no backing `.def` field** — confirming the grep wasn't a search failure.
+2. **`ComputeMassAndHP()` is an instance method returning `void`**, not a pure
+   `ComputeMass(size, modifier)`. Calling it needs a fully constructed `CubeBlockDefinition`, i.e.
+   the engine's definition-loading pipeline — the machinery `BlueprintHelperSE2` already built
+   (`Se2Runtime.cs`, `AbstractDefinitionActivators.cs`). Copying from it (§11) matters more than it
+   first appeared.
+
+Inputs are few and visible: `RelativeBlockSize`, `MassCurveModifier`, `MinBlockMass`.
+
+### 10.2.1 RESOLVED — we transcribe, and engine hosting is not needed
+
+The spike is done (Research §4.0). `ComputeMassAndHP()` was decompiled, the formula is three lines,
+and all twelve thruster `V` values were recovered as exact integers. **Transcribe wins outright** —
+the comparison below is kept for the record, but the decision is made.
+
+`Engine` is therefore **not created**. v1 ships with **zero game-assembly dependency**: the producer
+reads JSON, the consumer reads JSON, and the one piece of engine behaviour we need is 3 lines of
+arithmetic in `Core` (§5.4) plus a 20-entry integer table (§5.5).
+
+That also means the producer is far lighter than planned — plain `System.Text.Json` file walking, no
+assembly loading, no `UseWPF`, no out-of-process bootstrap. The §4 constraint about Avalonia
+collisions still holds in principle but is now **moot in practice**, since nothing loads SE2's
+assemblies at all.
+
+Engine hosting stays documented as the escalation path for two later features that genuinely need it:
+`VRage.Voxels.SurfaceGravity` (planet gravity magnitude, Research §5.3) and `.vrb` blueprint decoding
+(Check mode). Neither is in v1.
+
+### 10.3 The comparison that led there
+
+| | Engine hosting | **Transcribe formula** | Empirical fit |
+|---|---|---|---|
+| Accuracy | Exact | Exact | Approximate |
+| Runtime dependency | SE2 install, Windows | **None** | None |
+| Testable in CI | No | **Yes** | Yes |
+| Survives a retune | **Automatic** | Needs re-check | Full re-measurement |
+| Effort | High | **Low** | Medium |
+
+Transcribe won, and took about an hour rather than the estimated few (§10.2.1).
+
+Note the producer/consumer split had already softened the "survives a retune" column:
+`MassCurveModifier` and `MinBlockMass` are read from `.def` by the producer, so retuned values track
+automatically under any option. Only a change to the formula's *shape* — or to a block's collision
+mesh — needs work, and both are detectable (§5.5).
+
+### 10.4 Incidental finding
+
+`ThrusterDefinition` exposes a **`ThrustDirection`** property that appears in no `.def` file (so every
+thruster runs a default). Not needed for Plan mode; it's the field per-axis analysis will want in
+Check mode.
+
+---
+
+## 11. Settled decisions
+
+- **CLI name is `tc`** (`AssemblyName`, so the binary is `tc.exe`) — no conflict on the dev machine.
+- **Every project targets plain `net9.0`** (§2). No Windows TFM anywhere, because nothing loads SE2's
+  assemblies.
+- **Avalonia 12.1.1**, with `AvaloniaUI.DiagnosticsSupport` 2.2.3 for dev tools — the old
+  `Avalonia.Diagnostics` package stops at 11.x and does not exist for Avalonia 12.
+- **Producer/consumer split** with `gamedata.json` as the contract (§1). The consumer needs nothing
+  but the JSON.
+- **Named-model parameterisation** for calculation models, not embedded formula strings (§3.2).
+- **Copy from the sibling project**, don't extract a shared package. Two small projects don't justify
+  the coupling; revisit if a third appears.
+- **Nothing derived from Keen's data is ever committed** — neither `.def` files nor `gamedata.json`.
+  Tests run on **synthetic** fixtures, deliberately named so they can't be confused with real data
+  (§7.1).
+- **Three distribution paths** (§3.4): web users get a server-hosted config, desktop binary users get
+  one bundled at packaging time, power users run `tc extract`. **Releases need a manual extraction
+  step** on a machine with the game — CI builds code, never data (§3.5).
+- **The desktop GUI keeps a thin rebuild affordance** that shells out to `tc.exe` (Design §4.5.1) —
+  desktop-only, absent from the web build, degrading to an explanation rather than a dead button.
+- **No wiki cross-check command.** Hand-maintained, slow to update, demonstrably error-prone
+  (Research §3.1 found an entire column copy-pasted wrong). Its mass table stays in the research
+  notes as a one-off sanity check and becomes irrelevant once the mass curve lands.
+
+## 12. Open technical questions
+
+1. ~~Mass formula shape~~ — **resolved** (§10.2.1, Research §4.0). No blockers remain.
+2. **Schema design details** (§3) — worth sketching the actual JSON before writing `Model`, since it
+   is the contract both sides bind to and the synthetic fixture must mirror it. Now the next task.
+3. **Recover `V` for cargo containers and tanks** the same way thruster values were recovered
+   (§5.5) — needs their in-game masses. Mechanical, not a research question.
+3. **Web hosting specifics** — deferred entirely, but §3.5 option 2 (binary fetches config from the
+   same host on first run) becomes attractive the moment a host exists. Don't design for it yet;
+   don't foreclose it either.

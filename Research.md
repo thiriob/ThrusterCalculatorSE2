@@ -1,4 +1,4 @@
-# ThrustersHelper SE2 — Research
+# ThrusterCalculator SE2 — Research
 
 Research date: **2026-08-04**. Game build observed: SE2 alpha, definition bundles stamped
 `2.0.1.x` – `2.3.0.2798` (see §2.3 on why the stamp varies per file).
@@ -18,32 +18,26 @@ programmable blocks to a version.
 
 Consequences:
 
-- The SE1 pattern (a PB script that reads the live grid) is **not available**. This must be an
-  external desktop app.
-- We cannot query a *running* game for a live grid state. Everything comes from **files on disk**:
-  the shipped definition data, and the user's saved blueprints/worlds.
-- Modding *does* exist (Alpha VS1.5 "Modding" release) and there is a separate
-  `Space Engineers 2 - Mod SDK` Steam depot. **We deliberately do not depend on it** — the app must
-  work with only the base game installed. See §6.
+- The SE1 pattern (a PB script reading the live grid) is **not available**. This must be an external
+  desktop app.
+- We cannot query a *running* game. Everything comes from **files on disk**.
+- Modding exists (Alpha VS1.5) and there's a separate `Space Engineers 2 - Mod SDK` depot.
+  **We deliberately do not depend on it** — the app must work with only the base game installed (§7).
 
 ---
 
-## 2. The definition data — the important discovery
+## 2. The definition data
 
 ### 2.1 `.def` files are plain JSON
 
 `GameData\Vanilla\Content\` contains **17,172 `.def` files**, and they are *plain, readable JSON*.
-This is a much better position than SE1's `.sbc` XML or SE2's binary `.vrb` saves.
+Much better than SE1's `.sbc` XML or SE2's binary `.vrb` saves.
 
 Real example — `Blocks\Thrusters\Atmospheric\100\AtmosphericThruster100_ThrusterDefinition.def`:
 
 ```json
 {
-  "$Bundles": {
-    "Game2": "2.3.0.2722",
-    "System.Runtime": "1.0.0.0",
-    "VRage": "2.3.0.2722"
-  },
+  "$Bundles": { "Game2": "2.3.0.2722", "System.Runtime": "1.0.0.0", "VRage": "2.3.0.2722" },
   "$Type": "Game2:Keen.Game2.Simulation.WorldObjects.CubeBlocks.Movement.ThrusterDefinitionObjectBuilder",
   "$Value": {
     "Guid": "b4c0770f-75e1-4be6-a426-5fce05a8875e",
@@ -54,97 +48,84 @@ Real example — `Blocks\Thrusters\Atmospheric\100\AtmosphericThruster100_Thrust
 }
 ```
 
-The envelope is consistent across all definition files:
+Consistent envelope everywhere:
 
 | Field | Meaning |
 |---|---|
-| `$Bundles` | Assembly-version stamps for the bundles this file's schema was authored against |
+| `$Bundles` | Assembly-version stamps the file's schema was authored against |
 | `$Type` | `bundle:FullyQualifiedClrTypeName` of the object builder |
-| `$Value` | The payload. Always carries a `Guid` identity |
+| `$Value` | Payload, always carrying a `Guid` identity |
 
-This is the **same envelope** as the `.container-info` files in blueprint folders (confirmed in the
-sibling `BlueprintHelperSE2` research), so it's the engine-wide serialization shape.
+Same envelope as blueprint `.container-info` files (confirmed in `BlueprintHelperSE2`), so it's the
+engine-wide serialization shape.
 
 ### 2.2 It is a GUID-keyed graph, not a file hierarchy
 
-Nothing references anything by name or path. Everything is by GUID. From
-`AtmosphericThruster100_ThrustersPowerableBlockDefinition.def`:
+Nothing references anything by name or path — everything by GUID:
 
 ```json
-"$Value": {
-  "Guid": "00516d6b-93ad-496a-8b30-80c5d29c1072",
-  "UIData": { "Name": "ThrusterAtmo", "Icon": "{G}5cd48f85-..." },
-  "Density":          "d8adcfdc-f8e2-467e-9d27-78deae4057da",
-  "Recipe":           "136bb272-8077-4277-9da9-d0a1d8073cb9",
-  "RecipeEfficiency": "30e09afc-4437-49fe-aff5-54553d05d3c4",
-  "BlockKind":        "93e882df-b11a-4379-97ec-4176d195480f",
-  "ConsumedResource": { "Type": "bcded093-f5c0-4997-af3a-a6fbd853ad66", "Amount": 0 }
-}
+"Density":          "d8adcfdc-f8e2-467e-9d27-78deae4057da",
+"Recipe":           "136bb272-8077-4277-9da9-d0a1d8073cb9",
+"BlockKind":        "93e882df-b11a-4379-97ec-4176d195480f",
+"ConsumedResource": { "Type": "bcded093-f5c0-4997-af3a-a6fbd853ad66", "Amount": 0 }
 ```
 
-**Implication for the tool: the first thing to build is a GUID → definition index** over the whole
-`Content` tree. Every subsequent question ("what does this thruster weigh?", "what does it burn?")
-is a graph walk from that index. Folder layout is a convenience for humans, not the data model, and
-we should not depend on paths beyond an initial scan.
+**The first thing to build is a GUID → definition index** over the whole `Content` tree. Every
+subsequent question is a graph walk. Folder layout is a human convenience, not the data model.
 
-Resolving that `ConsumedResource.Type` GUID lands on `System\ResourceTypes\Electricity.def`:
+`ConsumedResource.Type` above resolves to `System\ResourceTypes\Electricity.def`:
 
 ```json
-{
-  "Guid": "bcded093-f5c0-4997-af3a-a6fbd853ad66",
-  "Name": "ResourceElectricity",
-  "FlowRateUnits": "Kilowatts",
-  "StorageUnits": "KilowattHours",
-  "RequiresConveyors": false
-}
+{ "Guid": "bcded093-...", "Name": "ResourceElectricity",
+  "FlowRateUnits": "Kilowatts", "StorageUnits": "KilowattHours", "RequiresConveyors": false }
 ```
 
 Only four resource types ship: `Electricity`, `Hydrogen`, `Oxygen`, `Water`.
 
 ### 2.3 Per-file version stamps vary — useful for staleness detection
 
-Observed `$Bundles.Game2` values across files in the *same* install: `2.0.1.1811`, `2.0.1.4905`,
-`2.0.1.5005`, `2.0.1.6909`, `2.2.0.540`, `2.3.0.2722`, `2.3.0.2798`. Keen ships definition files
-stamped by whichever build last touched them, so the stamp is a **per-file authoring version**, not
-the game version.
+Observed `$Bundles.Game2` in the *same* install: `2.0.1.1811`, `2.0.1.4905`, `2.0.1.5005`,
+`2.0.1.6909`, `2.2.0.108`, `2.2.0.540`, `2.3.0.936`, `2.3.0.971`, `2.3.0.1613`, `2.3.0.2099`,
+`2.3.0.2722`, `2.3.0.2798`. Keen stamps each file with whichever build last touched it — a **per-file
+authoring version**, not the game version. Take the max as a rough build indicator; use file metadata
+hashing for actual staleness detection (Technic §4.2).
 
-Useful consequence: we can detect "the game patched and our cached extraction is stale" cheaply by
-hashing file metadata rather than re-parsing 17k files every launch. See Technic.md §4.
+### 2.4 Delta encoding is real — and we mostly dodge it
 
-### 2.4 Delta encoding exists — and we should avoid needing it
-
-Prefab/composition definitions are delta-encoded against a parent. From
-`AtmosphericThruster100_Client.def`:
+Prefab/composition definitions are delta-encoded against a parent:
 
 ```json
 "ObjectBuilders": {
   "$DeltaEncoded": true,
-  "Keys": [ "b7bf405c-...", "e58b8f69-...", ... ],
-  "Changed": [ { "Kind": "Insert", "Index": 10, "Value": null }, ... ],
-  "Removed": []
+  "Keys": [ "b7bf405c-...", ... ],
+  "Changed": [ { "Kind": "Update", "Index": 3, "Value": { ... } } ],
+  "Removed": [ "832efb8e-..." ]
 }
 ```
 
-Resolving these properly means reimplementing the engine's delta/inheritance semantics — expensive
-and fragile.
+Resolving these properly means reimplementing engine inheritance semantics.
 
-**The good news: the numbers we actually need are not delta-encoded.** `_ThrusterDefinition.def` and
-`_PowerableBlockDefinition.def` are flat, complete documents. We should scope the reader to the flat
-definition types and treat delta-encoded prefab/composition data as out of scope unless something
-forces us in. There *are* base templates in `Content\Templates\Blocks\BaseDefinitions\` (e.g.
-`ThrustersPowerableBlockDefinition.def`, which carries `PCU: 150` and a default `ConsumptionPriority`)
-— so some fields may be inherited rather than restated per block. **Open question:** confirm whether
-per-block definitions always restate the fields we care about, or whether we must fall back to the
-template when a field is absent. The atmospheric thruster's own powerable def *omits* `PCU` while the
-template has it, which suggests inheritance is real and we will need at least template fallback.
+**The good news: the thruster numbers are not delta-encoded.** `_ThrusterDefinition.def` and
+`_PowerableBlockDefinition.def` are flat, complete documents.
+
+**The bad news: planet data *is* delta-encoded** (§5). So we can't dodge it entirely if we want
+gravity/atmosphere from the game. Fortunately the payloads we need are inline in the `Changed`
+array (`Value` objects carry their own `$Type` and fields), so a **shallow** delta reader — read the
+`Changed` entries, ignore inheritance — extracts them without a full engine reimplementation. That's
+a pragmatic middle path, and it's how §5's numbers below were obtained.
+
+Base templates in `Content\Templates\Blocks\BaseDefinitions\` (e.g.
+`ThrustersPowerableBlockDefinition.def`, carrying `PCU: 150`) mean some fields are inherited rather
+than restated. The atmospheric thruster's own powerable def omits `PCU` while the template has it —
+so **template fallback is required**, at least for fields we care about.
 
 ---
 
-## 3. Thruster data as it exists today
+## 3. Thruster data — the complete table
 
-Extracted by parsing every `*_ThrusterDefinition.def` under `Content\Blocks\Thrusters\`:
+Every `*ThrusterDefinition.def` under `Content\Blocks\Thrusters\`, all 12 of them:
 
-| Block | ThrustClass | ThrustPower | ResourcesRequiredToThrust |
+| Block | ThrustClass | ThrustPower (N) | ResourcesRequiredToThrust |
 |---|---|---:|---:|
 | AtmosphericThruster100 | Atmospheric | 40 000 | 75 |
 | AtmosphericThruster250 | Atmospheric | 287 136.3 | 650 |
@@ -154,53 +135,130 @@ Extracted by parsing every `*_ThrusterDefinition.def` under `Content\Blocks\Thru
 | IonThruster150 | Ion | 82 492.88 | 240 |
 | IonThruster500 | Ion | 856 368.56 | 1 800 |
 | IonThruster750 | Ion | 5 636 987 | 8 000 |
+| HydrogenThruster50 | *(absent)* | 60 000 | 0.75 |
+| HydrogenThruster200 | *(absent)* | 359 468.8 | 4 |
 | HydrogenThruster250 | *(absent)* | 1 895 631 | 12 |
+| HydrogenThruster750 | *(absent)* | 19 395 660 | 120 |
 
-Notes and cautions:
+Notes:
 
-- **The trailing numeral is the block size in centimetres** (100 = 1 m, 1000 = 10 m), matching SE2's
-  variable-size grid. It is *not* a tier index.
-- **Hydrogen thrusters omit `ThrustClass` entirely.** The file is
-  `HydrogenThruster250_HydrogenThrusterDefinition.def` — a different *filename* convention, but the
-  same `$Type` (`ThrusterDefinitionObjectBuilder`). The parser must therefore key off `$Type`, **not
-  filename**, and must treat a missing `ThrustClass` as a valid case (engine default). **Open
-  question:** what does the engine default to, and does hydrogen get a class later?
-- **`ResourcesRequiredToThrust` is not comparable across classes.** Atmospheric/Ion consume
-  Electricity (kW, per §2.2). Hydrogen's value of 12 against 1.9 MN of thrust is implausible as kW —
-  it is almost certainly hydrogen flow in different units. Do not build a cross-class efficiency
-  metric until each class's consumed-resource GUID is resolved individually.
-- **Underwater thrusters exist as art but not as data.** `Content\Blocks\Thrusters\Underwater\`
-  has size folders `50/150/250/750` with models and materials but **zero `.def` files** — consistent
-  with water being the unshipped VS3 milestone. The tool must handle "block folder exists, no
-  definition" without crashing, and ideally surface it as "not yet implemented in this build."
-- Present thruster families: `Atmospheric` (4 sizes), `Ion` (4), `Hydrogen` (4: 50/200/250/750),
-  `Underwater` (4, data-less). Only one hydrogen size was read in detail; the other three should be
-  parsed the same way.
-- Thrust does not follow a clean power law against size. Thrust ÷ size³ for atmospheric gives
-  0.040 / 0.018 / 0.012 / 0.015 across 100/250/500/1000 — non-monotonic. **Treat the table as data,
-  never interpolate a formula.** This is exactly why the app must read the game rather than model it.
+- **The trailing numeral is block size in centimetres** (100 = 1 m, 1000 = 10 m), matching SE2's
+  variable-size grid. Not a tier index.
+- **Hydrogen omits `ThrustClass` entirely**, and its files are named `*_HydrogenThrusterDefinition.def`
+  — but the `$Type` is the same `ThrusterDefinitionObjectBuilder`. **The parser must key off `$Type`,
+  never filename**, and treat missing `ThrustClass` as valid.
+- **`ResourcesRequiredToThrust` is not comparable across classes.** Atmospheric/Ion are Electricity
+  (kW). Hydrogen's `0.75 … 120` against 60 kN … 19 MN is clearly a hydrogen flow rate in other units.
+  Resolve each thruster's `ConsumedResource` GUID individually before computing any efficiency metric.
+- **Underwater thrusters: art only, no data.** `Blocks\Thrusters\Underwater\{50,150,250,750}\` has
+  models and materials but **zero `.def` files** — consistent with water being the unshipped VS3
+  milestone (confirmed: water is a future update). Handle "folder exists, no definition" gracefully
+  and surface it as "not implemented in this build."
+- Thrust does not follow a clean power law against size (thrust ÷ size³ for atmospheric:
+  0.040 / 0.018 / 0.012 / 0.015 — non-monotonic). **Treat the table as data, never interpolate.**
 
-### 3.1 What is *not* in the data — the real modelling gap
+### 3.1 Cross-check against the community wiki — and why it validates the whole premise
 
-The community understanding of SE1 thrusters (atmospheric thrusters lose effectiveness with air
-density; ion thrusters lose effectiveness inside atmosphere; hydrogen works everywhere) is **not
-represented in any field we found**. There is no `MinPlanetaryInfluence` / `EffectivenessAtMinInfluence`
-analogue in the SE2 `ThrusterDefinition`.
+[spaceengineers2.wiki.gg/wiki/Thruster_comparison](https://spaceengineers2.wiki.gg/wiki/Thruster_comparison)
+publishes a thruster table. Comparing it against the game files above is *extremely* instructive:
 
-Either the curve is hardcoded in engine code, or lives in a definition type we have not identified,
-or SE2 has not implemented atmospheric falloff yet. **This is the single most important open question**
-— without it, "how much thrust do I get at 2 km altitude on Verdure" is unanswerable.
+| Block | Game `ThrustPower` | Wiki thrust | Verdict |
+|---|---:|---:|---|
+| Atmo 250 / 500 / 1000 | 287 136 / 1 516 383 / 15 465 370 | identical | ✅ match |
+| **Atmo 100** | **40 000** | **16 273** | ❌ **wiki stale** (also 75 kW vs wiki 50 kW) |
+| Hydrogen 50 / 200 / 250 / 750 | 60 000 / 359 469 / 1 895 631 / 19 395 660 | identical | ✅ match |
+| **Ion 100** | **8 950** | 16 270 | ❌ mismatch |
+| **Ion 150** | **82 493** | 287 130 | ❌ mismatch |
+| **Ion 500** | **856 369** | 1 516 380 | ❌ mismatch |
+| **Ion 750** | **5 636 987** | 15 465 370 | ❌ mismatch |
 
-Also note Keen's own support forum has active *design* threads proposing substantial thruster
-reworks (fans vs. jets, oxidizer boosters, xenon for ion). These are **proposals, not shipped
-mechanics** — they contain no numbers and must not be treated as current behaviour. But they are a
-strong signal that this data will churn.
+Two distinct failures, and both are worth understanding:
+
+1. **Atmo 100 is genuinely stale** — the game was retuned (16 273 N → 40 000 N, 50 kW → 75 kW) and
+   the wiki hasn't caught up.
+2. **The entire ion thrust column is a copy-paste of the atmospheric column.** Wiki ion values
+   (16 270 / 287 130 / 1 516 380 / 15 465 370) are the atmospheric values to within rounding. The
+   *power* column is correct (40/240/1800/8000 all match the game). Real ion thrust is roughly
+   **3.5–5× lower** than the wiki claims.
+
+**This is the strongest possible argument for the app's core premise.** A player sizing an ion-thruster
+ship off the wiki would under-build by a factor of ~4 and their ship would not fly. Reading the game
+files is not a nice-to-have.
+
+**Use the wiki as a cross-check oracle, never as a source.** Concretely: the CLI should have a
+`compare` command that diffs extracted values against a checked-in wiki snapshot, so discrepancies
+surface as a report rather than a surprise.
+
+### 3.2 The wiki *does* give us something the game files don't: mass
+
+The wiki's mass column has no counterpart in the definition files (§4), so it can't be cross-checked
+— but it's the only mass data we have, and mass is now a v1 blocker (Design: thruster self-weight).
+
+| Size | Atmospheric | Ion | Hydrogen |
+|---|---:|---:|---:|
+| 0.5 m | — | — | 33 kg |
+| 1 m | 58 kg | 58 kg | — |
+| 1.5 m | — | 290 kg | — |
+| 2 m | — | — | 464 kg |
+| 2.5 m | 464 kg | — | 1 005 kg |
+| 5 m | 1 552 kg | 1 576 kg | — |
+| 7.5 m | — | 6 188 kg | 7 096 kg |
+| 10 m | 8 343 kg | — | — |
+
+**Treat every figure here as `Assumed` provenance.** Given §3.1 showed an entire wiki column was
+copy-pasted wrong, and that Atmo 2.5 m and Hydrogen 2 m share a suspiciously identical 464 kg, these
+need in-game verification before being trusted. They are a starting point and a sanity check on any
+mass curve we derive, not ground truth.
+
+### 3.3 Environmental effectiveness — **found, and fully in data**
+
+A grep across `Blocks\Thrusters\` finds no effectiveness field, which initially looked like a dead
+end. It isn't: the model is **global, keyed by thrust class**, in
+`Content\System\Configurations\ThrustClassesConfiguration.def`:
+
+```json
+"$Type": "Game2:Keen.Game2.Simulation.GameSystems.Movement.ThrustClassesConfigurationObjectBuilder",
+"ThrustClasses": [
+  { "$Key": "Ion",         "MaxThrustAirDensity": 0.2, "MinThrustAirDensity":  0.8,
+                           "WaterSubmersionTolerance": 1, "WaterOnly": false },
+  { "$Key": "Atmospheric", "MaxThrustAirDensity": 0.8, "MinThrustAirDensity":  0.2,
+                           "WaterSubmersionTolerance": 1, "WaterOnly": false },
+  { "$Key": "Hydrogen",    "MaxThrustAirDensity": 0,   "MinThrustAirDensity": -1,
+                           "WaterSubmersionTolerance": 1, "WaterOnly": false },
+  { "$Key": "Water",       "MaxThrustAirDensity": 0,   "MinThrustAirDensity": -1,
+                           "WaterSubmersionTolerance": 1, "WaterOnly": true  }
+]
+```
+
+This is the SE1 `MinPlanetaryInfluence` / `EffectivenessAtMinInfluence` analogue, and it is **exactly
+the missing piece**. Reading it:
+
+- **Atmospheric** — full thrust at air density **≥ 0.8**, ramping to zero at **≤ 0.2**. Dead in vacuum.
+- **Ion** — inverted: full thrust at density **≤ 0.2**, ramping to zero at **≥ 0.8**. Note `Max` is
+  attached to the *low* density; the field names describe "the density at which max thrust occurs,"
+  not an ordering. **Do not assume `Min < Max`** when parsing.
+- **Hydrogen** — `Min = -1` is a sentinel meaning *no falloff*: constant thrust everywhere. Matches
+  the community understanding, and confirms hydrogen is the environment-agnostic option.
+- **Water** — `WaterOnly: true`. A fourth class **already exists in config** even though no underwater
+  thruster ships a definition (§3). Direct confirmation that underwater thrusters are staged for the
+  water milestone.
+
+Combined with §5.2's per-planet atmosphere geometry, this closes the loop: planet gives air density
+as a function of altitude, this config maps air density to a thrust multiplier per class. **The whole
+environmental model is readable JSON — no engine code required.**
+
+Between the two ramp points, assume linear interpolation on air density. That assumption should be
+verified in-game, but it's the standard SE1 behaviour and the two-point parameterisation strongly
+implies it.
+
+The wiki's "Space = 0 / Atmosphere = 1" annotations are a lossy summary of this table — another
+reason to treat the wiki as a cross-check, not a source (§3.1).
 
 ---
 
 ## 4. Mass — not a stored value
 
-There is no `Mass` field on a block. `PowerableBlockDefinition.Density` points at one of four shared
+No `Mass` field on a block. `PowerableBlockDefinition.Density` points at one of four shared
 definitions in `Content\Blocks\Shared\Density\`:
 
 | Definition | `MassCurveModifier` |
@@ -212,62 +270,268 @@ definitions in `Content\Blocks\Shared\Density\`:
 
 Thrusters are `Mostly Hollow` (11).
 
-So block mass is derived: `mass = f(blockSize, MassCurveModifier)`, where `f` is a curve that is
-**not present in the definition data** — a full-tree grep for `MassCurve` finds only these four
-files. The curve lives in engine code.
+So `mass = f(blockSize, MassCurveModifier)` where `f` is **not in the definition data** — a full-tree
+grep for `MassCurve` finds only these four files. The curve lives in engine code.
 
-This matters a lot: **a thruster calculator needs ship mass, and ship mass is exactly the thing SE2
-does not hand us in data.** Options, in order of preference:
+Sanity check against §3.2's wiki masses: Atmo 1 m = 58 kg, Atmo 2.5 m = 464 kg. Volume ratio is
+15.6×, mass ratio is 8.0×. So mass is **sub-linear in volume** — not a simple `density × volume`.
+Consistent with "curve," and confirms we can't guess it.
 
-1. **Read mass from a blueprint's own metadata** if the grid file carries a computed total (needs
-   `.vrb` decoding — §5).
-2. **Empirically derive the curve**: build test grids in-game, read displayed mass, fit against
-   size and modifier. Tedious but gives a real model, and only needs redoing when Keen retunes.
-3. **Have the user enter target mass manually.** Always available as a fallback and probably the
-   right v1 behaviour regardless.
-4. Recover the curve from engine assemblies by decompilation — highest fidelity, highest fragility,
-   and it drags in the dependency we are trying to avoid.
+One global config exists — `Content\System\Configurations\CubeBlockMassConfiguration.def` — but it
+carries only `MinBlockMass: 5`. A floor, not the curve.
 
-**Recommendation: ship (3) first, pursue (2) as the differentiator, treat (1) as the stretch goal.**
+**This is a v1 blocker**, because the calculator must add proposed thrusters' own weight
+(Design §4.2), and the container/tank mass path needs block masses too.
+
+### 4.0 SOLVED — the formula, decompiled and verified
+
+```csharp
+public void ComputeMassAndHP()
+{
+    int num = 0;
+    foreach (var group in OccupiedGridCellsGroups)
+        num += group.GetSizeIncludingMax().Volume();
+
+    if (Density == null)
+        Mass = MassConfiguration.MinBlockMass;
+    else
+        Mass = (float)(Density.MassCurveModifier * Math.Sqrt(num) * Math.Log10(num)
+                       + MassConfiguration.MinBlockMass);
+
+    MaxHealth = (Fragility?.MaxHPMassMultiplier ?? 1f) * Mass;
+}
+```
+
+Decompiled from `Game2.Simulation.dll`,
+`Keen.Game2.Simulation.WorldObjects.CubeBlocks.CubeBlockDefinition` (build path in the assembly
+confirms `Stable_VS2.3`). So:
+
+> **`mass = MassCurveModifier × √V × log₁₀(V) + MinBlockMass`**
+>
+> where **V** = total occupied grid-cell count, `MassCurveModifier` ∈ {7, 11, 20, 35} (§4), and
+> `MinBlockMass` = 5 (`CubeBlockMassConfiguration.def`).
+
+Two notes on edge behaviour: a block with no `Density` gets exactly `MinBlockMass`, and since
+`log₁₀(1) = 0`, a single-cell block also lands on exactly `MinBlockMass` — which is what the constant
+is *for*, not an arbitrary floor.
+
+**Verification.** Solving the formula for `V` against all twelve wiki masses (§3.2), using the
+thrusters' `Mostly Hollow` modifier of 11, recovers **exact integers in every case** — round-tripping
+to within 0.2 kg:
+
+| Block | Known kg | V (solved) | V | mass(V) |
+|---|---:|---:|---:|---:|
+| HydrogenThruster50 | 33 | 8.0 | **8** | 33.1 |
+| AtmosphericThruster100 | 58 | 16.0 | **16** | 58.0 |
+| IonThruster100 | 58 | 16.0 | **16** | 58.0 |
+| IonThruster150 | 290 | 144.1 | **144** | 289.9 |
+| AtmosphericThruster250 | 464 | 287.9 | **288** | 464.1 |
+| HydrogenThruster200 | 464 | 287.9 | **288** | 464.1 |
+| HydrogenThruster250 | 1 005 | 936.1 | **936** | 1 004.9 |
+| AtmosphericThruster500 | 1 552 | 1 852.3 | **1 852** | 1 551.8 |
+| IonThruster500 | 1 576 | 1 897.9 | **1 898** | 1 576.0 |
+| IonThruster750 | 6 188 | 17 540.9 | **17 541** | 6 188.0 |
+| HydrogenThruster750 | 7 096 | 22 031.4 | **22 031** | 7 095.9 |
+| AtmosphericThruster1000 | 8 343 | 28 877.5 | **28 878** | 8 343.1 |
+
+Twelve independent integer hits is not coincidence. The formula is right, and — worth noting — the
+wiki's **mass** column is accurate even though its **thrust** column was badly wrong (§3.1). Different
+contributors, different reliability; judge columns, not sources.
+
+### 4.0.1 Where V comes from — and why it isn't in the JSON
+
+`OccupiedGridCellsGroups` is marked `SerializerFormatSet.None`: computed, never serialized. It's set
+by `SetOccupancy(BlockOccupancyData)`, produced by
+`Keen.Game2.Simulation.GameSystems.BlockDataGenerators.BlockOccupancyGenerator`:
+
+```csharp
+public class BlockOccupancyGenerator {
+    public const float CELL_SIZE       = 0.25f;    // 25 cm voxel grid
+    public const float MAX_BLOCK_VOLUME = 8000f;
+    public const int   MAX_BLOCK_CELLS  = 512000;
+
+    public BlockOccupancyData Generate(BufferReference<IPhysicsCollider> colliders) { … }
+    // voxelizes the block's physics colliders, then GeneratedBlockDataHelpers.BuildGroups(cells)
+}
+```
+
+So **V is derived by voxelizing the block's physics colliders at 25 cm** — it depends on collision
+mesh geometry, not on any definition field. `CELL_SIZE = 0.25` corroborates the recovered numbers: a
+50 cm hydrogen thruster gives V = 8 = 2×2×2 cells exactly, and the 150 cm ion thruster's V = 144
+factors as 6×6×4 = 1.5 m × 1.5 m × 1 m. Larger thrusters give V well below their bounding volume,
+consistent with tapered nozzle colliders.
+
+Generated block data is cached in `Content\contentcache.vrb` (26 MB) — binary, so reading it directly
+means the `.vrb` path (§5.4). **We don't need to.** See Technic §10 for the resolution: store the
+per-block integer `V` in the extracted config. It's ~20 integers, they're recoverable exactly (above),
+and because `MassCurveModifier` and `MinBlockMass` still come from `.def`, **retuning tracks
+automatically** — only a change to a block's collision mesh invalidates V, which is rare and shows up
+immediately as a mismatch against in-game mass.
+
+### 4.1 Assembly-level details (how the above was obtained)
+
+The shipped assemblies are managed C# and **not obfuscated**. Inspecting `Game2.Simulation.dll` via
+a `MetadataLoadContext` (metadata only, no code executed) gives the exact shape:
+
+```
+Keen.Game2.Simulation.WorldObjects.CubeBlocks.CubeBlockDefinition
+    [prop]   Single                     Mass                ← computed, never serialized
+    [prop]   CubeBlockMassConfiguration MassConfiguration   ← supplies MinBlockMass = 5
+    [prop]   BlockSizeDefinition        RelativeBlockSize
+    [method] void                       ComputeMassAndHP()  ← instance, void
+
+Keen.Game2.Simulation.WorldObjects.CubeBlocks.CubeBlockDensityDefinition
+    [prop]   Single                     MassCurveModifier   ← 7 / 11 / 20 / 35
+```
+
+`VRage.Voxels.dll` likewise contains `SurfaceGravity`, so planet gravity (§5.3) is reachable the same
+way.
+
+Two consequences:
+
+1. **`Mass` has no backing `.def` field** — it's produced by `ComputeMassAndHP()`. That confirms the
+   grep result above wasn't a search failure; the value genuinely isn't in the data.
+2. **`ComputeMassAndHP()` is an instance method returning `void`**, not a pure
+   `ComputeMass(size, modifier)`. Calling it requires a fully constructed `CubeBlockDefinition`,
+   which means standing up the engine's definition-loading pipeline.
+
+The inputs are few and all visible: `RelativeBlockSize`, `MassCurveModifier`, `MinBlockMass`. That
+smallness is what makes a **transcribe-the-formula** approach attractive as a lighter alternative to
+full engine hosting — see Technic §10 for the three-way comparison and recommendation.
+
+### 4.2 Resolution
+
+No tiering, no engine hosting, no empirical curve fitting. The formula is exact and its inputs are
+either in `.def` (`MassCurveModifier`, `MinBlockMass` — auto-tracking) or a small table of per-block
+integers (`V`) recovered exactly in §4.0.
+
+Block mass is `Derived` provenance: computed by our own transcribed formula from `Measured` inputs
+plus a recovered `V`. Fully testable, no runtime dependency, works on a machine with no game
+installed. See Technic §5.5 and §10.
+
+### 4.3 Cargo and tank capacity — no curve needed
+
+Good news for the "describe your loadout" mass path (Design §3): capacities are stored directly.
+
+**Cargo containers** — `*_InventoryDefinition.def` carries `MaxMass` in kg:
+
+| Block | `MaxMass` |
+|---|---:|
+| CargoContainer150 | 16 800 kg |
+| CargoContainer250 | 67 200 kg |
+| CargoContainer750 | 2 150 400 kg |
+
+So "half-full cargo" is directly computable — no mass curve involved. (The 750's 2 150 400 kg is a
+32× jump over the 250; verify in-game that it isn't a placeholder.)
+
+**Tanks** — `*_TanksResourceContainer.def` (`ResourceContainerDefinitionObjectBuilder`) carries
+`MaxCapacity`, plus charge/discharge rates and, on oxygen tanks, an explicit `ResourceType` GUID:
+
+| Block | `MaxCapacity` | `MaxDischargeRate` |
+|---|---:|---:|
+| HydrogenTank150 | 8 000 | 2 000 |
+| HydrogenTank500 | 32 000 | 4 000 |
+| HydrogenTank1250 | 1 280 000 | 100 000 |
+| OxygenTank150 | 8 000 | 2 000 |
+
+Units come from the referenced resource type (`Hydrogen.def` etc.), so resolve the GUID rather than
+assuming litres or kg. **To convert full-tank capacity into kilograms we still need a mass-per-unit
+for hydrogen** — check `Hydrogen.def` for a density field; if absent, that's another Tier-2 question.
+
+Note tank *block* mass still needs the mass curve; only the *contents* are free.
 
 ---
 
-## 5. Planet gravity — the awkward one
+## 5. Planets — corrected: they *do* have definitions
 
-Gravity is **not** in `.def` data. A full grep for gravity fields returns only gravity *generator*
-blocks, character gravity sets, and water-domain gravity proxies — no planet surface gravity.
+**An earlier draft of this document said planet data lives only in world saves. That was wrong.**
+Planet definitions exist under `Content\Procedural\<Milestone>\Planets\<Name>\`.
 
-Planets exist as named content: `Delfos`, `Kemik`, `Verdure`, and `Moons` (found under
-`Content\System\ColonizationMap\Models\Planets\`, i.e. map *models*, not physics definitions).
+### 5.1 The planet roster
 
-Actual planet parameters appear to live inside world saves — `GameData\Vanilla\Worlds\<World>\`
-contains `savegame.vrb`, `sessioncomponents.vrb`, `assetjournal.vrb` and a `Blobs\` directory of
-GUID-named files. `.vrb` is the **binary** VRage container (magic bytes `VR3B`), the same format
-that blocked the sibling `BlueprintHelperSE2` project.
+| Milestone | Planets |
+|---|---|
+| VS1_5 | EarthLike, MarsLike, Testerran, WaterPlanet |
+| VS2_0 | Verdure, Kemik |
+| VS2_2 | Caligo (files say `Titan_`), Geomeles, Palatine |
+| VS2_3 | Verdure, Kemik, Caligo, Palatine (re-tuned `_VS2-3` variants) |
+| VS3_0 | Byblos (the water milestone) |
 
-Prior art from `BlueprintHelperSE2/RESEARCH.md`: the way to read `.vrb` is
+Note the **milestone-versioned duplicates** — `VerdureInfoDefinition.def` (VS2_0) *and*
+`VerdureInfoDefinition_VS2-3.def` both exist. The app must not show "Verdure" twice, and must pick
+the newest variant. This versioning also means older milestone folders are effectively dead data.
+
+### 5.2 The reference chain, and what's at the end of it
+
+`<Planet>InfoDefinition.def` is only a **debug-screen** entry
+(`Game2:Keen.Game2.Client.Debugging.Screens.Voxels.PlanetInfoDefinitionObjectBuilder`) with
+`Name` / `Preview` / `Spawn`. Following `Spawn`:
+
+```
+<Planet>InfoDefinition.def  ──Spawn──▶  <Planet>_Server.def  (PrefabDefinition)
+                                          └──_entity.Definition──▶  <Planet>_ServerComposition.def
+                                                                      (EntityCompositeDefinition, delta-encoded)
+```
+
+Inside the composition's `Changed` array (from `VS1_5\Planets\EarthLike\Data\Earthlike_Server.def`):
+
+```json
+{ "$Type": "Game2:...RangedAffectGenerators.Gravity.GravityGeneratorObjectBuilder",
+  "AffectDistance": 1.5 },
+
+{ "$Type": "Game2:...RangedAffectGenerators.Atmosphere.AtmosphereGeneratorObjectBuilder",
+  "AffectDistance": 1.15,
+  "ConstantAffectDistance": 1.08 },
+
+{ "$Type": "VRage:Keen.VRage.Water.Components.PlanetaryWaterComponentObjectBuilder" }
+```
+
+This is a real find:
+
+- **`GravityGenerator.AffectDistance: 1.5`** — the gravity well extends to 1.5× planet radius.
+- **`AtmosphereGenerator.AffectDistance: 1.15` / `ConstantAffectDistance: 1.08`** — atmosphere is at
+  **full density out to 1.08 R**, then **falls off to nothing by 1.15 R**. This is the SE1
+  `MinPlanetaryInfluence`/`MaxPlanetaryInfluence` analogue, and it's the **atmospheric falloff model**
+  §3.3 couldn't find on the thruster side. The environment carries the curve; the thruster just has a
+  class.
+- `PlanetaryWaterComponent` on EarthLike, consistent with water being staged for VS3.
+
+These are **multipliers of planet radius**, all dimensionless.
+
+### 5.3 What's still missing: radius, and therefore surface gravity
+
+Neither surface gravity nor planet radius appears in any `.def`. Checked:
+`PlanetGeneratorDefinitionObjectBuilder` (heightmaps, `HillParams`, `MaxAltimeter`, `IsMoon` — no
+radius), `PlanetEnvironmentDataDefinition`, and a `Radius|Mass|Gravity` grep across all of
+`Content\Procedural\` (only flora/voxel-scatter hits).
+
+**Interpretation:** planet radius is *instance* data, set when a planet is spawned into a world — the
+same generator can be instantiated at different sizes. It lives in the world save `.vrb`. Surface
+gravity is then presumably derived from radius by the engine.
+
+**So, answering the question directly:** your instinct was right that planets carry their own data,
+and it's better than I first reported — the gravity/atmosphere **field shape** is per-planet,
+per-milestone, in readable JSON, and a custom or modded planet shipping its own `.def` files **would
+be picked up automatically** by a GUID-index-based reader. That extensibility works.
+
+But the **surface gravity magnitude** is not there. Practical plan:
+
+1. Read `AffectDistance` / `ConstantAffectDistance` per planet from `.def` — real, live, extensible.
+2. Ship a **curated, user-editable gravity magnitude table** keyed by planet name, marked `Assumed`.
+3. Auto-discover *new* planets from the `.def` scan; if one appears with no gravity entry, show it
+   with an empty, editable gravity field rather than hiding it. That way a new Keen planet or a
+   player's custom planet appears the day it ships, needing one number from the user.
+
+That gets the extensibility benefit without blocking on `.vrb`.
+
+### 5.4 If we ever do want `.vrb`
+
+`GameData\Vanilla\Worlds\<World>\` holds `savegame.vrb`, `sessioncomponents.vrb`, `assetjournal.vrb`
+and a `Blobs\` directory. `.vrb` is the binary VRage container (magic `VR3B`) that blocked the
+sibling `BlueprintHelperSE2` project. Per its `RESEARCH.md`, the only known route is
 [`divinci/vrage-binary-serialization`](https://github.com/divinci/vrage-binary-serialization), which
-does **not** reimplement the format — it loads SE2's own assemblies and drives the engine's real
-serializer. That makes it Windows-only, install-dependent, and fragile across patches. That research
-also flags inconsistent package naming (`Bjornabe.Vrbe.Core` vs `Bjornabe.Vrb.Core`) and very early
-maturity — verify against real source before depending on it.
-
-**Design consequence (this is the key one):** the "touches the game" concern is really **two**
-concerns with completely different risk profiles.
-
-| | `.def` JSON reading | `.vrb` binary reading |
-|---|---|---|
-| Needs game assemblies | **No** | Yes |
-| Fragility across patches | Low (JSON, tolerant parsing) | High |
-| Third-party dependency | None | Early-stage, unverified |
-| Covers | Thruster stats, power, density, resources | Planets/gravity, blueprint grids, real ship mass |
-
-They must not live in the same project. The calculator has to be fully usable with only the JSON
-path working. See Technic.md.
-
-**Pragmatic v1:** ship a small curated gravity table (user-editable) for the known planets, sourced
-by reading the in-game HUD, and treat `.vrb` planet extraction as a later capability. A wrong-but-
-editable number beats a blocked feature.
+loads SE2's own assemblies and drives the engine serializer — Windows-only, install-dependent,
+fragile, early-stage, inconsistent package naming. **Not needed for v1.**
 
 ---
 
@@ -277,64 +541,66 @@ editable number beats a blocked feature.
 <SteamLibrary>\steamapps\common\SpaceEngineers2\
   Game2\  GameData\  redist\  VRage\  Licenses.txt
   GameData\Vanilla\
-    Vanilla<...>.def                  (root manifest, 1589 B)
-    Content\                          20 top-level dirs; 17,172 .def, 4,588 .dds, 1,396 .vrm ...
+    Content\                            17,172 .def, 4,588 .dds, 1,396 .vrm ...
       Blocks\Thrusters\{Atmospheric,Hydrogen,Ion,Underwater}\<sizeCm>\*.def
       Blocks\Shared\Density\*.def
       Templates\Blocks\BaseDefinitions\*.def
       System\ResourceTypes\{Electricity,Hydrogen,Oxygen,Water}.def
-    Worlds\<WorldName>\{savegame.vrb, sessioncomponents.vrb, Blobs\, .container-info}
+      Procedural\VS{1_5,2_0,2_2,2_3,3_0}\Planets\<Name>\Data\*.def
+    Worlds\<WorldName>\{savegame.vrb, sessioncomponents.vrb, Blobs\}
 
 %AppData%\SpaceEngineers2\
-  AppData\Blueprints\<Name>\{.container-info (JSON), grid.json.vrb (binary), icon.png}
-  AppData\SaveGames\, AppData\SE1GridsToImport\
-  Settings\, Temp\{Logs, LocalMods, CrashReports, ...}
+  AppData\Blueprints\<Name>\{.container-info (JSON), grid.json.vrb (binary)}
+  AppData\SaveGames\, Settings\, Temp\
 ```
 
 **Locating the install:** do not hardcode. Parse
 `C:\Program Files (x86)\Steam\steamapps\libraryfolders.vdf`, find the library whose `apps` block
-contains **`1133870`** (SE2's app id), then append `steamapps\common\SpaceEngineers2`. On this
-machine that resolves to `G:\SteamLibrary\...`, *not* the default C: library — so the naive path
-would have failed. Always allow a manual override.
-
-The Mod SDK is a **separate** depot (`Space Engineers 2 - Mod SDK`). We are not depending on it.
-Worth noting though: Keen's own Mod SDK `Editor` ships `Avalonia.*.dll` — **Keen built their modding
-editor in Avalonia**. Good validation of the chosen UI stack, and their binaries are a reference for
-what a mature SE2-adjacent Avalonia app looks like.
+contains **`1133870`**, append `steamapps\common\SpaceEngineers2`. On this machine that resolves to
+**`G:\SteamLibrary\...`, not the C: default** — the naive path would have failed. Always allow manual
+override.
 
 ---
 
-## 7. Prior art
+## 7. Prior art and environment notes
 
-- **`../BlueprintHelperSE2`** — our own sibling project. Structure (`Core` / `Gui` / `Vrage` / `Cli` /
-  `Core.Tests`) is the template we're following here, and its `RESEARCH.md` is the reference for the
-  `.vrb` problem. Reuse the install-discovery and `.vrb` access work rather than redoing it.
-- **SE2 tools surveyed in that project** (none do thruster analysis):
-  [InflexCZE/SpaceEditor](https://github.com/InflexCZE/SpaceEditor),
-  [MerabyLabs/SE-Block-Exchanger](https://github.com/MerabyLabs/SE-Block-Exchanger),
-  [charleyah/BlueprintBreakdown](https://github.com/charleyah/BlueprintBreakdown).
-- **SE1 lineage** — community thruster calculators and the wiki thrust-per-MW tables. Useful for
-  *what questions players ask*, useless for SE2 numbers. Explicitly do not port SE1 constants.
+- **`../BlueprintHelperSE2`** — our sibling project. Structure (`Core`/`Gui`/`Vrage`/`Cli`/`Tests`),
+  `Se2Installation.cs`, `BlockDefinitionIndex*` are all reusable. Its `RESEARCH.md` is the `.vrb`
+  reference.
+- **Keen's Mod SDK `Editor` ships `Avalonia.*.dll`** — Keen built their modding editor in Avalonia.
+  Good validation of the UI stack. We still don't depend on the SDK.
+- **SE2's own `Game2\` folder also ships Avalonia** — which is *why* game assemblies can't be hosted
+  in an Avalonia process (Technic §3). Important, not incidental.
+- SE2 targets **`net9.0`** with `Microsoft.WindowsDesktop.App` (`SpaceEngineers2.runtimeconfig.json`).
+- SE2 tools surveyed previously, none do thruster analysis:
+  [SpaceEditor](https://github.com/InflexCZE/SpaceEditor),
+  [SE-Block-Exchanger](https://github.com/MerabyLabs/SE-Block-Exchanger),
+  [BlueprintBreakdown](https://github.com/charleyah/BlueprintBreakdown).
 
 ---
 
 ## 8. Open questions, ranked
 
-1. **Atmospheric/ion effectiveness curve** (§3.1) — where does environment modulate thrust? Blocks
-   the headline feature. Investigate: grep engine assemblies for the curve; or measure empirically
-   in-game at varying altitude.
-2. **The mass curve** (§4) — `MassCurveModifier` → kg. Blocks automatic ship mass.
-3. **Planet gravity source** (§5) — `.vrb` world decoding, or curated table.
-4. **Template inheritance** (§2.4) — must we fall back to `Templates\Blocks\BaseDefinitions\` when a
-   field is absent? Cheap to answer by diffing a few blocks against their template.
-5. **`ResourcesRequiredToThrust` units per class** (§3) — resolve each thruster's `ConsumedResource`
-   GUID; confirm hydrogen's `12`.
-6. **Hydrogen's missing `ThrustClass`** (§3) — engine default?
-7. Do the other three hydrogen sizes (50/200/750) and the ion/atmo sets all parse identically?
+**All v1 blockers are now closed** — the mass formula (§4.0), environmental effectiveness (§3.3),
+cargo/tank capacity (§4.3), atmosphere geometry (§5.2). What remains is refinement, not blocking:
 
-## 9. Suggested next investigation (before writing app code)
+1. **Recover `V` for cargo containers and tanks** the same way the thruster values were recovered
+   (§4.0) — needs their in-game masses. Mechanical.
+2. **Air-density-vs-altitude curve shape** — §5.2 gives full density to 1.08 R and zero at 1.15 R;
+   §3.3 gives density → thrust multiplier. Is the density ramp between them linear? And is the
+   thrust ramp between `MinThrustAirDensity` and `MaxThrustAirDensity` linear? Verify in-game.
+4. **Surface gravity magnitude per planet** (§5.3) — curated editable table for v1;
+   `VRage.Voxels.SurfaceGravity` is the faithful route.
+5. **Hydrogen mass per capacity unit** (§4.3) — needed to turn full tanks into kilograms.
+6. **`ResourcesRequiredToThrust` units per class** (§3) — resolve each `ConsumedResource` GUID.
+7. **Template inheritance** (§2.4) — which fields need fallback to `Templates\Blocks\BaseDefinitions\`.
+8. **Hydrogen's missing `ThrustClass`** (§3) — the config in §3.3 *does* define a `Hydrogen` key, so
+   the engine presumably defaults to it. Confirm rather than assume.
+9. **Verify the 750 cargo container's 2 150 400 kg** (§4.3) — plausibly a placeholder.
 
-Write one throwaway script that walks all 17,172 `.def` files, groups by `$Type`, and dumps the
-distinct schema per type. That single artefact answers Q4, Q5, Q7 at once and tells us exactly which
-`$Type`s the real reader must support — for a few minutes' work, before committing to any parser
-design.
+## 9. First implementation task
+
+Build the **`dump-schemas` CLI command** (not a throwaway script — see Technic §5.1): walk all 17,172
+`.def` files, group by `$Type`, emit the distinct field set per type. That single artefact answers
+Q2, Q5, Q6 at once, tells us exactly which `$Type`s the reader must support, and becomes the
+patch-diffing tool for every future game update.

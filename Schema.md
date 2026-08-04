@@ -1,0 +1,281 @@
+# `gamedata.json` — the contract
+
+The artifact the **producer** (`tc`) writes and the **consumer** (GUI / web / `Core`) reads. Per
+[Technic.md](Technic.md) §1 this is the project's real API: the two sides never link, so this file is
+the entire interface between them.
+
+Companion to [Research.md](Research.md) (where each value comes from) and [Technic.md](Technic.md)
+(how it's produced and consumed).
+
+---
+
+## 1. Design rules
+
+**R1 — Fully resolved.** No GUIDs, no cross-references, no engine concepts. The producer walks the
+GUID graph so the consumer never has to. A consumer should be writable by someone who has never seen
+a `.def` file.
+
+**R2 — Store inputs, not outputs.** Block mass is *not* stored — `occupiedCells`, `massCurveModifier`
+and `minBlockMass` are, and `Core` computes mass from them (Technic §5.4). Storing a derived value
+alongside its inputs invites drift, and the formula is three lines that belong in one tested place.
+
+**R3 — Named models, not formulas.** Where behaviour could change, the config names a model and
+supplies parameters; `Core` implements a closed set (Technic §3.2). Never embed expression strings.
+An unknown model name is a hard, actionable error — never a silent fallback.
+
+**R4 — Provenance is local and explicit.** Values are plain scalars, implicitly `measured` (read from
+game files). Anything that *isn't* measured is declared in the owning object's `provenance` map. This
+keeps the file readable while making every soft number visible.
+
+**R5 — Hand-editable.** A user must be able to open this and fix a gravity value. That means plain
+scalars, meaningful key names, no base64, no packed arrays.
+
+**R6 — Additive-safe.** Consumers ignore unknown fields. New optional fields are a minor version bump.
+
+---
+
+## 2. Top-level shape
+
+```jsonc
+{
+  "schemaVersion": "1.0",
+
+  "generator": {
+    "tool": "tc",
+    "version": "0.1.0",
+    "extractedAt": "2026-08-04T14:22:31Z"
+  },
+
+  "source": {
+    "gameBuild": "2.3.0.2798",          // max observed $Bundles version (Research §2.3)
+    "fingerprint": "sha256:9f2c…",      // over (relpath, size, mtime) of Content/**/*.def
+    "definitionCounts": {                // sanity signal — see §6
+      "ThrusterDefinitionObjectBuilder": 12,
+      "CubeBlockDensityDefinitionObjectBuilder": 4,
+      "ResourceTypeDefinitionObjectBuilder": 4
+    }
+  },
+
+  "models":       { /* §3 */ },
+  "densities":    [ /* §4.1 */ ],
+  "resources":    [ /* §4.2 */ ],
+  "thrustClasses":[ /* §4.3 */ ],
+  "thrusters":    [ /* §4.4 */ ],
+  "containers":   [ /* §4.5 */ ],
+  "tanks":        [ /* §4.5 */ ],
+  "planets":      [ /* §4.6 */ ],
+
+  "warnings":     [ /* §6 */ ]
+}
+```
+
+`schemaVersion` is `major.minor`. **Major mismatch → refuse to load, with a clear message.** Minor
+ahead → load, ignore unknown fields, note it. Configs outlive the app that wrote them; a user may
+hand a newer file to an older build.
+
+---
+
+## 3. `models` — the parameterised behaviour (R3)
+
+```jsonc
+"models": {
+  "blockMass": {
+    "kind": "sqrtLog10CellCount",       // mass = modifier * sqrt(V) * log10(V) + minBlockMass
+    "minBlockMass": 5.0                 // from CubeBlockMassConfiguration.def
+  },
+  "thrustEffectiveness": {
+    "kind": "linearRampAirDensity"      // ramp between min/max ThrustAirDensity, clamped [0,1]
+  },
+  "atmosphereDensity": {
+    "kind": "linearRampAltitude"        // 1.0 to constantAffectDistance, → 0 at affectDistance
+  }
+}
+```
+
+`kind` selects a `Core` implementation; sibling fields are its parameters. `minBlockMass` sits here
+rather than on each block because it's a single global from one config file.
+
+Both ramp models are **assumed linear** pending in-game verification (Research §8). If a ramp turns
+out to be curved, that's a new `kind` plus a `Core` model — a contained change, not a rewrite. That
+containment is the whole point of R3.
+
+---
+
+## 4. Entity collections
+
+Every entity has a stable `id` (producer-generated, derived from the block name — *not* a game GUID,
+per R1) and a `name` for display.
+
+### 4.1 `densities`
+
+```jsonc
+{ "id": "mostlyHollow", "name": "Mostly Hollow", "massCurveModifier": 11.0 }
+```
+
+Four of these ship (7 / 11 / 20 / 35). Referenced by `density` id on any block.
+
+### 4.2 `resources`
+
+```jsonc
+{ "id": "electricity", "name": "ResourceElectricity",
+  "flowRateUnits": "Kilowatts", "storageUnits": "KilowattHours", "requiresConveyors": false }
+```
+
+Four ship: electricity, hydrogen, oxygen, water.
+
+### 4.3 `thrustClasses`
+
+Straight from `ThrustClassesConfiguration.def` (Research §3.3):
+
+```jsonc
+{ "id": "atmospheric", "maxThrustAirDensity": 0.8, "minThrustAirDensity": 0.2,
+  "waterSubmersionTolerance": 1.0, "waterOnly": false }
+```
+
+⚠ **`min` may exceed `max`** — that's how ion is expressed (full thrust at *low* density). Consumers
+must interpolate across the interval regardless of ordering. `minThrustAirDensity: -1` is the
+sentinel for *no falloff* (hydrogen). Both rules are load-bearing; get them wrong and ion thrusters
+silently invert.
+
+### 4.4 `thrusters`
+
+```jsonc
+{
+  "id": "atmosphericThruster250",
+  "name": "Atmospheric Thruster 2.5m",
+  "thrustClass": "atmospheric",        // null for hydrogen — see below
+  "sizeCm": 250,
+  "thrustNewtons": 287136.3,
+  "consumedResource": { "resource": "electricity", "ratePerThrust": 650 },
+  "density": "mostlyHollow",
+  "occupiedCells": 288,                // V — Research §4.0
+  "implemented": true,
+  "provenance": { "occupiedCells": "derived" }
+}
+```
+
+- `thrustClass` is **nullable** — hydrogen thrusters omit it in the game data (Research §3). Consumers
+  must handle null, not assume a string.
+- `occupiedCells` is `derived` (recovered by solving the mass formula, Research §4.0). If it's
+  `null`, the consumer must report *"mass unknown"* — **never substitute zero**, which would silently
+  corrupt the self-weight solver (Technic §5.1).
+- `implemented: false` covers blocks with art but no definition — underwater thrusters today
+  (Research §3). They appear in the config so the UI can show "not in this build" (Design §4.4)
+  rather than pretending they don't exist.
+- `ratePerThrust` units come from the referenced resource — **not comparable across classes**
+  (Research §3).
+
+### 4.5 `containers` and `tanks`
+
+```jsonc
+// containers
+{ "id": "cargoContainer250", "name": "Cargo Container 2.5m",
+  "maxMassKg": 67200, "density": "mostlyHollow", "occupiedCells": null,
+  "provenance": { "occupiedCells": "unknown" } }
+
+// tanks
+{ "id": "hydrogenTank500", "name": "Hydrogen Tank 5m",
+  "resource": "hydrogen", "maxCapacity": 32000, "maxDischargeRate": 4000,
+  "density": "mostlyHollow", "occupiedCells": null }
+```
+
+`maxMassKg` is the container's cargo *capacity*, directly from the game (Research §4.3) — distinct
+from the block's own mass, which is computed. Both are needed: Design §3.2's load presets scale the
+former, the self-weight solver uses the latter.
+
+Tank `maxCapacity` is in the referenced resource's `storageUnits`. **Converting a full tank to
+kilograms needs a mass-per-unit for hydrogen that we don't have yet** (Research §8) — until then the
+consumer reports tank contents as `unknown` provenance rather than guessing.
+
+### 4.6 `planets`
+
+```jsonc
+{
+  "id": "verdure",
+  "name": "Verdure",
+  "milestone": "VS2_3",                       // newest variant wins — Research §5.1
+  "surfaceGravity": 9.81,                     // m/s² — NOT in game data
+  "gravityAffectDistance": 1.5,               // × planet radius
+  "atmosphere": {
+    "affectDistance": 1.15,                   // density → 0 here
+    "constantAffectDistance": 1.08            // density = 1.0 up to here
+  },
+  "provenance": { "surfaceGravity": "assumed" }
+}
+```
+
+Milestone-versioned duplicates exist in the game data (`Verdure` appears under VS2_0 *and* VS2_3).
+**The producer resolves this — one entry per planet, newest milestone wins** — so the consumer never
+sees a duplicate. `milestone` is retained for display and diagnostics.
+
+`surfaceGravity` is always `assumed`: it's world-instance data, not definition data (Research §5.3).
+A planet discovered with no gravity entry gets `null` + `"unknown"`, and the UI shows it with an
+empty editable field rather than hiding it — that's what makes new and custom planets work on day one.
+
+---
+
+## 5. Provenance (R4)
+
+Four values, on the owning object, keyed by field name:
+
+| Value | Meaning |
+|---|---|
+| *(absent)* | **`measured`** — read from game files. The default; never written explicitly |
+| `"derived"` | Computed by us from measured inputs (e.g. `occupiedCells`) |
+| `"assumed"` | Curated guess or user edit (e.g. `surfaceGravity`) |
+| `"unknown"` | Not available. The value **must** be `null`. Consumer shows a gap, never a zero |
+
+Defaulting to `measured` keeps the file readable — most fields are plain scalars and the annotation
+appears only where it matters. `unknown` is deliberately distinct from `assumed`: "we have no idea"
+and "here's our best guess" produce different UI and different user actions.
+
+---
+
+## 6. `warnings` and `definitionCounts` — the anti-silent-failure machinery
+
+```jsonc
+"warnings": [
+  { "code": "unknownThrustClass", "detail": "HydrogenThruster750: ThrustClass absent",
+    "file": "Blocks/Thrusters/Hydrogen/750/…def" },
+  { "code": "missingDefinition", "detail": "Underwater thrusters: models present, no definition" }
+]
+```
+
+Extraction never throws on bad input (Technic §7.2) — it records and continues. Surfacing warnings in
+the config means a degraded extraction is *visible* rather than silently producing confident wrong
+answers.
+
+`definitionCounts` is the blunt version of the same idea: "12 thrusters found" in the UI means a drop
+to 8 after a patch is noticed immediately. This is the single cheapest defence against the failure
+mode that actually matters here.
+
+---
+
+## 7. Worked example — end to end
+
+Atmospheric Thruster 2.5 m on Verdure at sea level, from config to answer:
+
+```
+thrust        = 287136.3 N                                    (thrusters[].thrustNewtons)
+airDensity    = 1.0                                            (atmosphereDensity model, surface)
+effectiveness = ramp(1.0, min 0.2, max 0.8) → clamp → 1.0       (thrustEffectiveness model)
+mass          = 11 × √288 × log₁₀(288) + 5 = 464.1 kg           (blockMass model)
+                  ↑ densities[mostlyHollow]   ↑ occupiedCells  ↑ models.blockMass.minBlockMass
+gravity       = 9.81 m/s²                                       (planets[verdure].surfaceGravity)
+```
+
+Feeding a 500 t hull into the sizing solver (Technic §5.1) gives n = 18, supported range
+500–518.6 t. Every input traces to one config field, and three of them are named models.
+
+---
+
+## 8. Settled
+
+1. **`sizeCm` is an integer.** Keen is not expected to introduce fractional block sizes; all shipped
+   sizes are whole centimetres (50…1000). If that ever changes it's a minor version bump to a
+   `sizeMetres` float, and the integer stays readable in the meantime.
+2. **English only, no localisation.** `name` is the English display string the producer synthesises.
+   The game ships `.loc-texts` files, but the app is English-only, so there's no `nameKey` indirection
+   — one less join for the consumer and one less thing to keep in sync.
+3. **`installPath` is deliberately omitted** from `source`. It would leak a local filesystem path into
+   a file that may be hosted or shared, and nothing consumes it.

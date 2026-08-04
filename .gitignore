@@ -1,0 +1,62 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Space Engineers 2 game data — NEVER COMMIT
+#
+# Neither Keen's definition files nor anything extracted from them belongs in
+# this repo. See Technic.md §3.4 (distribution) and §7.1 (fixtures).
+#
+# The ONE exception is tests/fixtures/synthetic-gamedata.json, which is
+# hand-authored with invented numbers and is deliberately NOT named
+# "gamedata.json" so these rules cannot swallow it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Extracted config — a build output, produced by `th extract`
+gamedata.json
+**/gamedata.json
+data/
+
+# Copies of Keen's definition files used for local verification
+*.def
+*.vrb
+**/realdata/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# .NET
+# ─────────────────────────────────────────────────────────────────────────────
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.user
+*.suo
+*.userprefs
+*.dll
+*.pdb
+*.exe
+project.lock.json
+project.assets.json
+artifacts/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IDE / tooling
+# ─────────────────────────────────────────────────────────────────────────────
+.vs/
+.idea/
+.vscode/
+_ReSharper*/
+*.DotSettings.user
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OS
+# ─────────────────────────────────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Local scratch
+# ─────────────────────────────────────────────────────────────────────────────
+*.log
+scratch/
+tmp/

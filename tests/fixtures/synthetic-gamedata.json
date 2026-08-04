@@ -1,0 +1,237 @@
+{
+  "_comment": [
+    "SYNTHETIC TEST FIXTURE — NOT REAL GAME DATA.",
+    "Every number here is invented. Do not use for calculations, do not ship, do not treat as a",
+    "reference for Space Engineers 2 values. Real configs are produced by `tc extract` and are",
+    "gitignored (see Technic.md 3.4).",
+    "This file exists to exercise the schema and its edge cases. See Schema.md."
+  ],
+
+  "schemaVersion": "1.0",
+
+  "generator": {
+    "tool": "tc",
+    "version": "0.0.0-synthetic",
+    "extractedAt": "2000-01-01T00:00:00Z"
+  },
+
+  "source": {
+    "gameBuild": "0.0.0-synthetic",
+    "fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "definitionCounts": {
+      "ThrusterDefinitionObjectBuilder": 5,
+      "CubeBlockDensityDefinitionObjectBuilder": 2,
+      "ResourceTypeDefinitionObjectBuilder": 2
+    }
+  },
+
+  "models": {
+    "blockMass": { "kind": "sqrtLog10CellCount", "minBlockMass": 5.0 },
+    "thrustEffectiveness": { "kind": "linearRampAirDensity" },
+    "atmosphereDensity": { "kind": "linearRampAltitude" }
+  },
+
+  "densities": [
+    { "id": "testHollow", "name": "Test Hollow", "massCurveModifier": 10.0 },
+    { "id": "testSolid", "name": "Test Solid", "massCurveModifier": 35.0 }
+  ],
+
+  "resources": [
+    {
+      "id": "testPower",
+      "name": "TestPower",
+      "flowRateUnits": "Kilowatts",
+      "storageUnits": "KilowattHours",
+      "requiresConveyors": false
+    },
+    {
+      "id": "testFuel",
+      "name": "TestFuel",
+      "flowRateUnits": "LitresPerSecond",
+      "storageUnits": "Litres",
+      "requiresConveyors": true
+    }
+  ],
+
+  "thrustClasses": [
+    {
+      "id": "testAtmo",
+      "maxThrustAirDensity": 0.8,
+      "minThrustAirDensity": 0.2,
+      "waterSubmersionTolerance": 1.0,
+      "waterOnly": false
+    },
+    {
+      "id": "testIon",
+      "_case": "min > max — inverted ramp, full thrust at LOW density",
+      "maxThrustAirDensity": 0.2,
+      "minThrustAirDensity": 0.8,
+      "waterSubmersionTolerance": 1.0,
+      "waterOnly": false
+    },
+    {
+      "id": "testNoFalloff",
+      "_case": "minThrustAirDensity -1 sentinel — effectiveness is always 1.0",
+      "maxThrustAirDensity": 0.0,
+      "minThrustAirDensity": -1.0,
+      "waterSubmersionTolerance": 1.0,
+      "waterOnly": false
+    },
+    {
+      "id": "testWaterOnly",
+      "_case": "waterOnly — must be excluded from every non-submerged calculation",
+      "maxThrustAirDensity": 0.0,
+      "minThrustAirDensity": -1.0,
+      "waterSubmersionTolerance": 1.0,
+      "waterOnly": true
+    }
+  ],
+
+  "thrusters": [
+    {
+      "id": "testThrusterBaseline",
+      "_case": "ordinary case. mass = 10*sqrt(100)*log10(100)+5 = 205 kg",
+      "name": "Test Thruster Baseline",
+      "thrustClass": "testAtmo",
+      "sizeCm": 100,
+      "thrustNewtons": 100000.0,
+      "consumedResource": { "resource": "testPower", "ratePerThrust": 500 },
+      "density": "testHollow",
+      "occupiedCells": 100,
+      "implemented": true,
+      "provenance": { "occupiedCells": "derived" }
+    },
+    {
+      "id": "testThrusterNullClass",
+      "_case": "thrustClass null — hydrogen thrusters omit it in real data",
+      "name": "Test Thruster Null Class",
+      "thrustClass": null,
+      "sizeCm": 50,
+      "thrustNewtons": 50000.0,
+      "consumedResource": { "resource": "testFuel", "ratePerThrust": 2 },
+      "density": "testHollow",
+      "occupiedCells": 8,
+      "implemented": true,
+      "provenance": { "occupiedCells": "derived" }
+    },
+    {
+      "id": "testThrusterSingleCell",
+      "_case": "occupiedCells 1 — log10(1)=0, so mass must be exactly minBlockMass (5)",
+      "name": "Test Thruster Single Cell",
+      "thrustClass": "testAtmo",
+      "sizeCm": 25,
+      "thrustNewtons": 1000.0,
+      "consumedResource": { "resource": "testPower", "ratePerThrust": 10 },
+      "density": "testHollow",
+      "occupiedCells": 1,
+      "implemented": true,
+      "provenance": { "occupiedCells": "derived" }
+    },
+    {
+      "id": "testThrusterTooHeavy",
+      "_case": "cannot lift its own weight: mass 14005 kg vs 1000 N thrust. At g=10, R=1 the sizing denominator (T*E - R*g*m) is negative — solver MUST report impossible, not divide.",
+      "name": "Test Thruster Too Heavy",
+      "thrustClass": "testAtmo",
+      "sizeCm": 1000,
+      "thrustNewtons": 1000.0,
+      "consumedResource": { "resource": "testPower", "ratePerThrust": 99999 },
+      "density": "testSolid",
+      "occupiedCells": 10000,
+      "implemented": true,
+      "provenance": { "occupiedCells": "derived" }
+    },
+    {
+      "id": "testThrusterUnimplemented",
+      "_case": "art exists, no definition — must render as 'not in this build', never as 0 N",
+      "name": "Test Thruster Unimplemented",
+      "thrustClass": "testWaterOnly",
+      "sizeCm": 250,
+      "thrustNewtons": null,
+      "consumedResource": null,
+      "density": "testHollow",
+      "occupiedCells": null,
+      "implemented": false,
+      "provenance": { "thrustNewtons": "unknown", "occupiedCells": "unknown" }
+    }
+  ],
+
+  "containers": [
+    {
+      "id": "testContainerSmall",
+      "name": "Test Container Small",
+      "maxMassKg": 10000,
+      "density": "testHollow",
+      "occupiedCells": 64,
+      "provenance": { "occupiedCells": "derived" }
+    },
+    {
+      "id": "testContainerUnknownMass",
+      "_case": "occupiedCells unknown — block mass must report as unknown, never 0",
+      "name": "Test Container Unknown Mass",
+      "maxMassKg": 40000,
+      "density": "testHollow",
+      "occupiedCells": null,
+      "provenance": { "occupiedCells": "unknown" }
+    }
+  ],
+
+  "tanks": [
+    {
+      "id": "testTank",
+      "_case": "capacity is in the resource's storageUnits; kg conversion is not yet known",
+      "name": "Test Tank",
+      "resource": "testFuel",
+      "maxCapacity": 10000,
+      "maxDischargeRate": 1000,
+      "density": "testHollow",
+      "occupiedCells": 216,
+      "provenance": { "occupiedCells": "derived" }
+    }
+  ],
+
+  "planets": [
+    {
+      "id": "testPlanetOne",
+      "_case": "ordinary planet with an assumed gravity",
+      "name": "Test Planet One",
+      "milestone": "VS0_0",
+      "surfaceGravity": 10.0,
+      "gravityAffectDistance": 1.5,
+      "atmosphere": { "affectDistance": 1.15, "constantAffectDistance": 1.08 },
+      "provenance": { "surfaceGravity": "assumed" }
+    },
+    {
+      "id": "testPlanetNoGravity",
+      "_case": "discovered planet with no gravity entry — UI shows an empty editable field, and it must NOT be silently treated as 0 or dropped",
+      "name": "Test Planet No Gravity",
+      "milestone": "VS0_0",
+      "surfaceGravity": null,
+      "gravityAffectDistance": 1.5,
+      "atmosphere": { "affectDistance": 1.2, "constantAffectDistance": 1.1 },
+      "provenance": { "surfaceGravity": "unknown" }
+    },
+    {
+      "id": "testPlanetAirless",
+      "_case": "no atmosphere at all — atmospheric thrusters produce nothing here",
+      "name": "Test Planet Airless",
+      "milestone": "VS0_0",
+      "surfaceGravity": 2.0,
+      "gravityAffectDistance": 1.5,
+      "atmosphere": null,
+      "provenance": { "surfaceGravity": "assumed" }
+    }
+  ],
+
+  "warnings": [
+    {
+      "code": "unknownThrustClass",
+      "detail": "testThrusterNullClass: ThrustClass absent — engine default assumed",
+      "file": "synthetic/no-such-file.def"
+    },
+    {
+      "code": "missingDefinition",
+      "detail": "testThrusterUnimplemented: models present, no ThrusterDefinition",
+      "file": "synthetic/no-such-file.def"
+    }
+  ]
+}
