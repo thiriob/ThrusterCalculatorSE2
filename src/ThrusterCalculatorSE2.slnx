@@ -10,6 +10,7 @@
     <File Path="../tests/fixtures/synthetic-gamedata.json" />
   </Folder>
   <Project Path="ThrusterCalculator.Model/ThrusterCalculator.Model.csproj" />
+  <Project Path="ThrusterCalculator.Model.Tests/ThrusterCalculator.Model.Tests.csproj" />
   <Project Path="ThrusterCalculator.Core/ThrusterCalculator.Core.csproj" />
   <Project Path="ThrusterCalculator.Core.Tests/ThrusterCalculator.Core.Tests.csproj" />
   <Project Path="ThrusterCalculator.Extraction/ThrusterCalculator.Extraction.csproj" />

@@ -58,6 +58,7 @@ ThrusterCalculatorSE2/
 
     ── consumer side ──
     ThrusterCalculator.Model/            net9.0  JSON schema types + (de)serialization
+    ThrusterCalculator.Model.Tests/      net9.0  contract tests against the synthetic fixture
     ThrusterCalculator.Core/             net9.0  domain + math. depends on Model only.
     ThrusterCalculator.Core.Tests/       net9.0  green on a clean clone, no SE2
 
@@ -404,9 +405,14 @@ not a rewrite (Design §3.3).
 
 ## 7. Testing
 
+- `Model.Tests` — the contract. Reads the committed synthetic fixture and asserts every edge case it
+  carries survives: null `thrustClass`, the `-1` no-falloff sentinel, inverted `min > max` ramp
+  ordering, null `occupiedCells`, explicit nulls, provenance defaulting, schema-version refusal, and
+  a write→read→write fixed point. The schema is the interface between the two halves, so it gets its
+  own suite rather than riding along in `Core.Tests`.
 - `Core.Tests` — the math (§5). Pure functions, fast. Where correctness lives.
 - `Extraction.Tests` — parsing, against **synthetic fixtures** (§7.1).
-- Both green on a clean clone with no SE2 installed.
+- All three green on a clean clone with no SE2 installed.
 - `tc verify` — on-demand invariant checks against a real local install (≥1 thruster per known
   family, all thrust > 0, every referenced GUID resolves). The canary for "the game patched and broke
   our assumptions," available without committing Keen's files.
