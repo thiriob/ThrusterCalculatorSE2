@@ -4,13 +4,92 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="using:ThrusterCalculator.Gui.ViewModels"
         xmlns:c="using:ThrusterCalculator.Gui.Controls"
-        mc:Ignorable="d" d:DesignWidth="1140" d:DesignHeight="760"
+        mc:Ignorable="d" d:DesignWidth="1500" d:DesignHeight="800"
         x:Class="ThrusterCalculator.Gui.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="ThrusterCalculator SE2"
-        Width="1140" Height="780"
-        MinWidth="960" MinHeight="600"
+        Width="1500" Height="820"
+        MinWidth="1150" MinHeight="620"
         FontSize="14">
+
+    <Window.Resources>
+        <!-- One configurator row. Fixed widths rather than a star between label and field: a star
+             pushed the spinner to the far edge of its column, leaving the number stranded away
+             from the size it belongs to. -->
+        <DataTemplate x:Key="ConfiguratorRow" DataType="vm:ConfiguratorRowViewModel">
+            <Grid ColumnDefinitions="46,140,136,*" Margin="0,0,0,6" Height="34">
+                <TextBlock Grid.Column="0" Classes="cell" Text="{Binding SizeText}" />
+                <!-- What one more actually buys. Without this the shortfall appears to move by the
+                     wrong amount. -->
+                <TextBlock Grid.Column="1" Classes="cell dim" Margin="0,0,8,0"
+                           Text="{Binding NetContributionText}" />
+                <c:CountInput Grid.Column="2" Value="{Binding Count}" />
+            </Grid>
+        </DataTemplate>
+
+        <!-- One template, two instances: "if you use one type" against a bare ship, and "to cover
+             what's left" against the shortfall the loadout leaves. Same component, different
+             requirement fed in — which is a decent sign the model underneath is right.
+
+             Narrower than the old full-width table, so covered range and draw move to the row
+             tooltip; count, added mass and achieved TWR are what you actually choose between. -->
+        <DataTemplate x:Key="ThrusterTable" DataType="vm:ThrusterTableViewModel">
+            <StackPanel>
+                <Grid ColumnDefinitions="56,40,100,54,*" Margin="10,0,10,2">
+                    <TextBlock Grid.Column="1" Classes="col" Text="No." />
+                    <TextBlock Grid.Column="2" Classes="col" Text="ADDED MASS" />
+                    <TextBlock Grid.Column="3" Classes="col" Text="TWR" />
+                </Grid>
+
+                <ItemsControl ItemsSource="{Binding Families}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ThrusterFamilyViewModel">
+                            <StackPanel Margin="0,0,0,6">
+                                <TextBlock Text="{Binding Name}" Classes="family" Margin="10,4,0,2" />
+                                <ItemsControl ItemsSource="{Binding Rows}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:ThrusterResultViewModel">
+                                            <Grid ColumnDefinitions="56,40,100,54,*" Margin="10,0,10,0"
+                                                  Height="24" ToolTip.Tip="{Binding DetailText}">
+                                                <TextBlock Grid.Column="0" Classes="cell"
+                                                           Text="{Binding SizeText}" />
+                                                <TextBlock Grid.Column="1" Classes="cell num"
+                                                           Text="{Binding Count}" />
+                                                <TextBlock Grid.Column="2" Classes="cell num"
+                                                           Text="{Binding AddedMassText}" />
+                                                <TextBlock Grid.Column="3" Classes="cell num"
+                                                           Text="{Binding RatioText}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock Classes="dim" Margin="10,4,0,0" IsVisible="{Binding IsEmpty}"
+                           Text="Nothing here can do it alone." />
+
+                <!-- Collapsed, never hidden: on an atmospheric world "the ion family is dead here"
+                     is among the most useful things the panel says. -->
+                <Expander IsVisible="{Binding HasUnusable}" Margin="0,4,0,0"
+                          Header="{Binding UnusableSummary}">
+                    <ItemsControl ItemsSource="{Binding Unusable}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ThrusterResultViewModel">
+                                <Grid ColumnDefinitions="150,*" Margin="0,1">
+                                    <TextBlock Grid.Column="0" Classes="cell" Text="{Binding Name}" />
+                                    <TextBlock Grid.Column="1" Classes="dim"
+                                               VerticalAlignment="Center" Text="{Binding StatusText}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Expander>
+            </StackPanel>
+        </DataTemplate>
+    </Window.Resources>
 
     <Window.Styles>
         <!-- Sizes are set relative to the window's 14px base rather than left to the theme
@@ -20,6 +99,9 @@
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Opacity" Value="0.75" />
             <Setter Property="Margin" Value="0,12,0,4" />
+        </Style>
+        <Style Selector="TextBlock.h.boxed">
+            <Setter Property="Margin" Value="0,0,0,6" />
         </Style>
         <Style Selector="TextBlock.dim">
             <Setter Property="Opacity" Value="0.65" />
@@ -114,18 +196,20 @@
             </StackPanel>
         </Border>
 
-        <Grid ColumnDefinitions="380,*" Margin="12">
+        <!-- Inputs | configurator | reference. The configurator is the answer now; the tables on
+             the right are the rule of thumb you check it against. -->
+        <Grid ColumnDefinitions="360,*,360" Margin="12">
 
             <!-- ── inputs ─────────────────────────────────────────────── -->
             <ScrollViewer Grid.Column="0" Margin="0,0,12,0"
                           HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
 
-                    <TextBlock Classes="h" Text="DEPARTURE" Margin="0,0,0,4" />
                     <Border Classes="card">
                         <!-- One label column width across all three rows, so the fields line up
                              instead of each starting wherever its own label happens to end. -->
                         <StackPanel Spacing="8">
+                            <TextBlock Classes="h boxed" Text="DEPARTURE" />
                             <TextBlock Classes="h" Text="GRAVITY" Margin="0,0,0,2" />
                             <Grid ColumnDefinitions="78,*,Auto">
                                 <TextBlock Grid.Column="0" Text="Planet" VerticalAlignment="Center" />
@@ -206,9 +290,9 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Classes="h" Text="SHIP MASS" />
                     <Border Classes="card">
                         <StackPanel Spacing="8">
+                            <TextBlock Classes="h boxed" Text="SHIP MASS" />
                             <!-- Each option binds two-way to its own settable property. A negated
                                  binding cannot write back, which left this group unclickable. -->
                             <RadioButton GroupName="mass" Content="I know it"
@@ -260,48 +344,59 @@
                                 <TextBlock Classes="dim" TextWrapping="Wrap"
                                            Text="Tanks count their block mass only — gas is massless in game, so a full tank weighs the same as an empty one." />
                             </StackPanel>
+
+                            <!-- The number everything downstream is computed from. It was only
+                                 visible as three preset figures in the middle column, which left
+                                 the panel you type into with no total of its own. -->
+                            <Separator Margin="0,4" />
+                            <Grid ColumnDefinitions="78,*">
+                                <TextBlock Grid.Column="0" Text="Total" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" Margin="8,0,0,0" FontSize="16"
+                                           VerticalAlignment="Center"
+                                           Text="{Binding ShipMassText}" />
+                            </Grid>
                         </StackPanel>
                     </Border>
 
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- ── results ────────────────────────────────────────────── -->
-            <DockPanel Grid.Column="1">
+            <!-- ── configurator: the answer ─────────────────────────────── -->
+            <DockPanel Grid.Column="1" Margin="0,0,12,0">
 
                 <StackPanel DockPanel.Dock="Top">
-                    <TextBlock Classes="h" Text="LOAD" Margin="0,0,0,4"
-                               IsVisible="{Binding IsStorageMode}" />
                     <Border Classes="card">
                         <StackPanel Spacing="8">
+                            <TextBlock Classes="h boxed" Text="LOAD"
+                                       IsVisible="{Binding IsStorageMode}" />
                             <StackPanel Spacing="8" IsVisible="{Binding IsStorageMode}">
-                            <ListBox ItemsSource="{Binding PresetNames}"
-                                     SelectedIndex="{Binding SelectedPresetIndex}"
-                                     HorizontalAlignment="Left">
-                                <ListBox.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <StackPanel Orientation="Horizontal" />
-                                    </ItemsPanelTemplate>
-                                </ListBox.ItemsPanel>
-                            </ListBox>
+                                <ListBox ItemsSource="{Binding PresetNames}"
+                                         SelectedIndex="{Binding SelectedPresetIndex}"
+                                         HorizontalAlignment="Left">
+                                    <ListBox.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                    </ListBox.ItemsPanel>
+                                </ListBox>
 
-                            <!-- All three shown at once: the failure this app exists to prevent is
-                                 the ship that lifts empty and strands full. -->
-                            <ItemsControl ItemsSource="{Binding Loads}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <StackPanel Orientation="Horizontal" Spacing="18" />
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:LoadSummary">
-                                        <StackPanel>
-                                            <TextBlock Classes="dim" Text="{Binding Name}" />
-                                            <TextBlock Text="{Binding MassText}" FontSize="16" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                <!-- All three shown at once: the failure this app exists to prevent
+                                     is the ship that lifts empty and strands full. -->
+                                <ItemsControl ItemsSource="{Binding Loads}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal" Spacing="18" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:LoadSummary">
+                                            <StackPanel>
+                                                <TextBlock Classes="dim" Text="{Binding Name}" />
+                                                <TextBlock Text="{Binding MassText}" FontSize="16" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </StackPanel>
 
                             <TextBlock>
@@ -311,102 +406,87 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Classes="h" Text="{Binding ConfigurationsHeading}" />
-
-                    <!-- Column header. The definitions are repeated verbatim in the row template
-                         below and must stay in step, or the table stops being a table.
-
-                         The name column is starred so it shrinks on a narrow window, but capped so
-                         it cannot sprawl: fullscreened, an uncapped star column pushed the counts
-                         hundreds of pixels away from the sizes they belong to. The trailing star
-                         absorbs whatever is left over instead. -->
-                    <Grid Margin="12,0,12,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" MaxWidth="200" />
-                            <ColumnDefinition Width="52" />
-                            <ColumnDefinition Width="104" />
-                            <ColumnDefinition Width="58" />
-                            <ColumnDefinition Width="124" />
-                            <ColumnDefinition Width="88" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="1" Classes="col" Text="COUNT" />
-                        <TextBlock Grid.Column="2" Classes="col" Text="ADDED MASS" />
-                        <TextBlock Grid.Column="3" Classes="col" Text="TWR" />
-                        <TextBlock Grid.Column="4" Classes="col" Text="COVERS UP TO" />
-                        <TextBlock Grid.Column="5" Classes="col" Text="DRAW" />
-                    </Grid>
                 </StackPanel>
 
-                <TextBlock DockPanel.Dock="Bottom" Classes="dim" Margin="0,8,0,0"
-                           Text="{Binding Assumption}" />
+                <!-- The running total, pinned below the list so it never scrolls out of sight —
+                     it is the thing you are steering by. -->
+                <StackPanel DockPanel.Dock="Bottom">
+                    <Border Classes="card" Margin="0,8,0,0">
+                        <StackPanel Spacing="6">
+                            <ProgressBar Minimum="0" Maximum="1" Height="6"
+                                         Value="{Binding LoadoutFraction}" />
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Classes="dim"
+                                           Text="{Binding LoadoutSummary}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Column="1" FontWeight="SemiBold" Margin="8,0,0,0"
+                                           Text="{Binding ShortfallText}" />
+                            </Grid>
+                            <TextBlock Classes="dim" TextWrapping="Wrap" Foreground="#D08A3E"
+                                       IsVisible="{Binding LoadoutHasUnknownMass}"
+                                       Text="&#x26A0; A placed thruster has unknown mass, so the requirement above is understated." />
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Classes="dim" Margin="0,6,0,0" Text="{Binding Assumption}" />
+                </StackPanel>
 
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel>
+                    <Border Classes="card">
+                      <StackPanel>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Classes="h boxed" Text="CONFIGURATOR" />
+                            <Button Grid.Column="1" Content="Clear" Margin="0,0,0,6"
+                                    IsVisible="{Binding HasPlacedThrusters}"
+                                    Command="{Binding ClearLoadoutCommand}" />
+                        </Grid>
 
-                        <ItemsControl ItemsSource="{Binding Families}">
+                        <ItemsControl ItemsSource="{Binding ConfiguratorFamilies}">
                             <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="vm:ThrusterFamilyViewModel">
+                                <DataTemplate x:DataType="vm:ConfiguratorFamilyViewModel">
                                     <StackPanel Margin="0,0,0,10">
                                         <TextBlock Text="{Binding Name}" Classes="family" />
 
-                                        <ItemsControl ItemsSource="{Binding Rows}">
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate x:DataType="vm:ThrusterResultViewModel">
-                                                    <Grid Margin="12,0,12,0" Height="26"
-                                                          ToolTip.Tip="{Binding DetailText}">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*" MaxWidth="200" />
-                                                            <ColumnDefinition Width="52" />
-                                                            <ColumnDefinition Width="104" />
-                                                            <ColumnDefinition Width="58" />
-                                                            <ColumnDefinition Width="124" />
-                                                            <ColumnDefinition Width="88" />
-                                                            <ColumnDefinition Width="*" />
-                                                        </Grid.ColumnDefinitions>
-                                                        <TextBlock Grid.Column="0" Classes="cell"
-                                                                   Text="{Binding SizeText}"
-                                                                   HorizontalAlignment="Left" />
-                                                        <TextBlock Grid.Column="1" Classes="cell num"
-                                                                   Text="{Binding Count}" />
-                                                        <TextBlock Grid.Column="2" Classes="cell num"
-                                                                   Text="{Binding AddedMassText}" />
-                                                        <TextBlock Grid.Column="3" Classes="cell num"
-                                                                   Text="{Binding RatioText}" />
-                                                        <TextBlock Grid.Column="4" Classes="cell num"
-                                                                   Text="{Binding MaxSupportedText}" />
-                                                        <TextBlock Grid.Column="5" Classes="cell num"
-                                                                   Text="{Binding DrawText}" />
-                                                    </Grid>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
+                                        <!-- Two explicit columns with a rule between them, rather
+                                             than a UniformGrid: the split is stable when the window
+                                             resizes, and there is something to draw the line on. -->
+                                        <Grid ColumnDefinitions="*,Auto,*">
+                                            <ItemsControl Grid.Column="0" ItemsSource="{Binding LeftRows}"
+                                                          ItemTemplate="{StaticResource ConfiguratorRow}" />
+
+                                            <Border Grid.Column="1" Width="1" Margin="10,2"
+                                                    Background="{DynamicResource SystemControlForegroundBaseLowBrush}" />
+
+                                            <ItemsControl Grid.Column="2" ItemsSource="{Binding RightRows}"
+                                                          ItemTemplate="{StaticResource ConfiguratorRow}" />
+                                        </Grid>
                                     </StackPanel>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-
-                        <!-- Collapsed, never hidden: "why can't I use this here?" is a real
-                             question during alpha, it just does not need eight rows to answer. -->
-                        <Expander IsVisible="{Binding HasUnusable}" Margin="0,4,0,0"
-                                  Header="{Binding UnusableSummary}">
-                            <ItemsControl ItemsSource="{Binding Unusable}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:ThrusterResultViewModel">
-                                        <Grid ColumnDefinitions="180,*" Margin="0,1">
-                                            <TextBlock Grid.Column="0" Classes="cell"
-                                                       Text="{Binding Name}" />
-                                            <TextBlock Grid.Column="1" Classes="dim"
-                                                       VerticalAlignment="Center"
-                                                       Text="{Binding StatusText}" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </Expander>
-                    </StackPanel>
+                      </StackPanel>
+                    </Border>
                 </ScrollViewer>
             </DockPanel>
+
+            <!-- ── reference ────────────────────────────────────────────── -->
+            <ScrollViewer Grid.Column="2" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <Border Classes="card">
+                      <StackPanel>
+                        <TextBlock Classes="h boxed" Text="{Binding ConfigurationsHeading}" />
+                        <ContentControl Content="{Binding SingleType}"
+                                        ContentTemplate="{StaticResource ThrusterTable}" />
+                      </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                      <StackPanel>
+                        <TextBlock Classes="h boxed" Text="TO COVER WHAT&apos;S LEFT" />
+                        <ContentControl Content="{Binding Remaining}"
+                                        ContentTemplate="{StaticResource ThrusterTable}" />
+                      </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
         </Grid>
     </DockPanel>
 </Window>

@@ -29,7 +29,18 @@ public class MassInput : NumericUpDown
         Minimum = 0;
         Increment = 1000;
         ParsingNumberStyle = NumberStyles.Number;
+
+        // Bring an out-of-range figure back into range rather than leaving it mangled: without it
+        // a too-large entry is neither clamped nor rejected, it is simply wrong.
+        ClipValueToMinMax = true;
+
+        // An emptied field settles back to its minimum once you leave it. Clearing the text writes
+        // null, which is a real state while mid-edit — the binding has to accept it or Avalonia
+        // paints a cast exception into the box — but a blank box left behind reads as broken. So it
+        // resolves on the way out rather than fighting the keystroke that produced it.
+        LostFocus += (_, _) => Value ??= Minimum;
     }
+
 
     protected override Type StyleKeyOverride => typeof(NumericUpDown);
 

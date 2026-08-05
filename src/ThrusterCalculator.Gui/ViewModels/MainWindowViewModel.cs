@@ -43,16 +43,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _useCustomGravity;
 
     /// <summary>The override value, used only when it is in force.</summary>
-    [ObservableProperty] private double _customGravity = AppSettings.DefaultCustomGravity;
+    [ObservableProperty] private double? _customGravity = AppSettings.DefaultCustomGravity;
 
-    [ObservableProperty] private double _targetThrustToWeight = 1.0;
+    [ObservableProperty] private double? _targetThrustToWeight = 1.0;
     [ObservableProperty] private MassEntryMode _massEntryMode = MassEntryMode.Direct;
 
     // Kilograms, because that is the unit the game puts on screen. The player reads a number off the
     // bottom-right of the HUD and types it in; asking for tonnes would make them divide first, and a
     // slip of three orders of magnitude is a silent, plausible-looking wrong answer.
-    [ObservableProperty] private double _directMassKg = 500_000;
-    [ObservableProperty] private double _hullMassKg = 300_000;
+    [ObservableProperty] private double? _directMassKg = 500_000;
+    [ObservableProperty] private double? _hullMassKg = 300_000;
     [ObservableProperty] private int _selectedPresetIndex = 2;
 
     public MainWindowViewModel(LoadedConfig config)
@@ -117,8 +117,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         // Carry the user's quantities across. They described their ship; a data rebuild should not
         // make them describe it again.
         var counts = Containers.Concat(Tanks)
-            .Where(r => r.Count > 0)
-            .ToDictionary(r => r.Id, r => r.Count, StringComparer.Ordinal);
+            .Where(r => r.Fitted > 0)
+            .ToDictionary(r => r.Id, r => r.Fitted, StringComparer.Ordinal);
 
         Refill(Containers, BuildStorage(isTank: false));
         Refill(Tanks, BuildStorage(isTank: true));
@@ -128,6 +128,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (counts.TryGetValue(row.Id, out var count)) row.Count = count;
             row.PropertyChanged += OnStorageChanged;
         }
+
+        // Same detach-carry-refill dance as storage: a rebuild must not lose the loadout the user
+        // has been building, nor leave handlers on rows nobody is looking at.
+        foreach (var row in ConfiguratorRows) row.PropertyChanged -= OnConfiguratorChanged;
+
+        var placed = ConfiguratorRows
+            .Where(r => r.Placed > 0)
+            .ToDictionary(r => r.Id, r => r.Placed, StringComparer.Ordinal);
+
+        Refill(ConfiguratorRows, BuildConfiguratorRows());
+
+        foreach (var row in ConfiguratorRows)
+        {
+            if (placed.TryGetValue(row.Id, out var count)) row.Count = count;
+            row.PropertyChanged += OnConfiguratorChanged;
+        }
+
+        Refill(ConfiguratorFamilies, ConfiguratorRows
+            .GroupBy(r => r.Family, StringComparer.Ordinal)
+            .Select(g => new ConfiguratorFamilyViewModel(g.Key, [.. g])));
 
         Refill(Planets, BuildPlanetOptions());
         Refill(PlanetItems, BuildPlanetItems());
@@ -170,8 +190,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         settings.SelectedPlanetId = SelectedPlanet?.Id;
         settings.UseCustomGravity = UseCustomGravity;
-        settings.CustomGravity = CustomGravity;
-        settings.TargetThrustToWeight = TargetThrustToWeight;
+        settings.CustomGravity = Custom;
+        settings.TargetThrustToWeight = Ratio;
     }
 
     public ConfigOrigin Origin { get; private set; }
@@ -324,13 +344,33 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// <summary>Every sized thruster, flat. The families below are built from this.</summary>
     public ObservableCollection<ThrusterResultViewModel> Results { get; } = [];
 
-    /// <summary>Feasible loadouts, grouped by family — what the panel actually renders.</summary>
-    public ObservableCollection<ThrusterFamilyViewModel> Families { get; } = [];
+    /// <summary>
+    /// "If you use one type": every thruster sized alone, against a bare ship.
+    /// </summary>
+    /// <remarks>
+    /// v1's whole answer, kept as a rule of thumb once the configurator becomes the answer. It
+    /// ignores whatever is placed on purpose — that is what makes it a reference.
+    /// </remarks>
+    public ThrusterTableViewModel SingleType { get; } = new();
+
+    /// <summary>
+    /// "To cover what's left": the same table, sized against the shortfall the loadout leaves.
+    /// </summary>
+    public ThrusterTableViewModel Remaining { get; } = new();
+
+    /// <summary>The thruster types the user can place, with their counts.</summary>
+    public ObservableCollection<ConfiguratorRowViewModel> ConfiguratorRows { get; } = [];
+
+    /// <summary>The same rows, grouped under a family heading — how the panel renders them.</summary>
+    public ObservableCollection<ConfiguratorFamilyViewModel> ConfiguratorFamilies { get; } = [];
+
+    /// <summary>Feasible loadouts, grouped by family — the single-type reference table.</summary>
+    public ObservableCollection<ThrusterFamilyViewModel> Families => SingleType.Families;
 
     /// <summary>The ones that cannot work here, folded away behind one line.</summary>
-    public ObservableCollection<ThrusterResultViewModel> Unusable { get; } = [];
+    public ObservableCollection<ThrusterResultViewModel> Unusable => SingleType.Unusable;
 
-    public bool HasUnusable => Unusable.Count > 0;
+    public bool HasUnusable => SingleType.HasUnusable;
 
     /// <summary>
     /// One line standing in for the whole unusable set.
@@ -340,21 +380,35 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// alpha (Design.md §4.4), and on an atmospheric world the ion family being dead is the single
     /// most useful thing the panel says — it just does not need eight rows to say it.
     /// </remarks>
-    public string UnusableSummary
+    public string UnusableSummary => SingleType.UnusableSummary;
+
+    // ── configurator ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>What the user has placed so far.</summary>
+    private Loadout _loadout = Loadout.Empty;
+
+    /// <summary>Thrust the placed loadout still leaves to find, and how close it is.</summary>
+    [ObservableProperty] private double _loadoutFraction;
+
+    [ObservableProperty] private string _loadoutSummary = string.Empty;
+
+    [ObservableProperty] private string _shortfallText = string.Empty;
+
+    [ObservableProperty] private bool _loadoutIsSatisfied;
+
+    [ObservableProperty] private bool _loadoutHasUnknownMass;
+
+    public bool HasPlacedThrusters => !_loadout.IsEmpty;
+
+    [RelayCommand]
+    private void ClearLoadout()
     {
-        get
-        {
-            if (Unusable.Count == 0) return string.Empty;
+        foreach (var row in ConfiguratorRows) row.Count = 0;
+    }
 
-            var reasons = Unusable
-                .Select(r => r.StatusText)
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
-
-            return reasons.Count == 1
-                ? $"{Unusable.Count} not usable here — {reasons[0]}"
-                : $"{Unusable.Count} not usable here";
-        }
+    private void OnConfiguratorChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ConfiguratorRowViewModel.Count)) Recalculate();
     }
 
     public ObservableCollection<LoadSummary> Loads { get; } = [];
@@ -370,8 +424,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// the full one is precisely the failure this app exists to prevent (Design §3.2).
     /// </remarks>
     public string ConfigurationsHeading => IsStorageMode
-        ? $"CONFIGURATIONS · {Presets[Math.Clamp(SelectedPresetIndex, 0, Presets.Length - 1)].Name.ToUpperInvariant()} LOAD"
-        : "CONFIGURATIONS";
+        ? $"IF YOU USE ONE TYPE · {Presets[Math.Clamp(SelectedPresetIndex, 0, Presets.Length - 1)].Name.ToUpperInvariant()} LOAD"
+        : "IF YOU USE ONE TYPE";
 
     [ObservableProperty] private string _shipMassText = string.Empty;
     [ObservableProperty] private string _requirementText = string.Empty;
@@ -423,8 +477,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// Derived rather than stored, so there is exactly one answer to "what gravity is in force"
     /// and the field on screen cannot drift away from the number the maths uses.
     /// </remarks>
+    private double Custom => CustomGravity ?? AppSettings.DefaultCustomGravity;
+
     public double Gravity =>
-        GravityIsCustom ? CustomGravity : SelectedPlanet?.SurfaceGravity ?? CustomGravity;
+        GravityIsCustom ? Custom : SelectedPlanet?.SurfaceGravity ?? Custom;
 
     /// <summary>
     /// The planet's own gravity, as a plain figure.
@@ -435,6 +491,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// effective value here instead would put the same number on screen twice whenever the
     /// override is on, and say nothing about what it replaced.
     /// </remarks>
+    /// <summary>Target ratio as the maths sees it; an empty field means "just hover".</summary>
+    private double Ratio => TargetThrustToWeight is > 0 ? TargetThrustToWeight.Value : 1.0;
+
     public string GravityText =>
         SelectedPlanet?.SurfaceGravity is { } g ? $"{g:0.##} m/s²" : "not stated";
 
@@ -577,7 +636,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Recalculate();
     }
 
-    partial void OnCustomGravityChanged(double value)
+    partial void OnCustomGravityChanged(double? value)
     {
         OnPropertyChanged(nameof(Gravity));
         OnPropertyChanged(nameof(GravityText));
@@ -596,11 +655,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(HasPlanetWarning));
     }
 
-    partial void OnTargetThrustToWeightChanged(double value) => Recalculate();
+    partial void OnTargetThrustToWeightChanged(double? value) => Recalculate();
 
-    partial void OnDirectMassKgChanged(double value) => Recalculate();
+    partial void OnDirectMassKgChanged(double? value) => Recalculate();
 
-    partial void OnHullMassKgChanged(double value) => Recalculate();
+    partial void OnHullMassKgChanged(double? value) => Recalculate();
 
     partial void OnSelectedPresetIndexChanged(int value)
     {
@@ -654,77 +713,110 @@ public sealed partial class MainWindowViewModel : ObservableObject
         };
 
         RequirementText =
-            $"{shipMass * Gravity * TargetThrustToWeight / 1000:N0} kN at lift-off";
+            $"{shipMass * Gravity * Ratio / 1000:N0} kN at lift-off";
 
-        var request = new SizingRequest
+        _loadout = new Loadout(
+            ConfiguratorRows.Select(r => new PlacedThruster(r.Id, r.Placed)));
+
+        var bare = new SizingRequest
         {
             ShipMassKg = shipMass,
             Environment = environment,
-            TargetThrustToWeight = TargetThrustToWeight,
+            TargetThrustToWeight = Ratio,
         };
 
-        // Feasible options first, cheapest in added mass leading — that is the choice being made.
-        var sized = _sizer.SizeAll(request)
-            .OrderByDescending(r => r.IsFeasible)
-            .ThenBy(r => r.AddedMassKg)
-            .ThenBy(r => r.ThrusterName, StringComparer.Ordinal);
+        var withLoadout = bare with { Placed = _loadout };
 
-        foreach (var r in sized)
-        {
-            var resource = _index.Resource(r.ResourceId);
-            var thruster = _index.Thruster(r.ThrusterId);
+        // The reference table ignores what is placed, on purpose: it answers "if you used only
+        // this", which is the rule of thumb you check the configurator against.
+        foreach (var row in Project(_sizer.SizeAll(bare), shipMass)) Results.Add(row);
+        Split(Results, SingleType);
 
-            Results.Add(new ThrusterResultViewModel
-            {
-                Name = r.ThrusterName,
-                Family = FamilyOf(thruster),
-                SizeCm = thruster?.SizeCm ?? 0,
-                Status = r.Status,
-                Count = r.Count,
-                AddedMassKg = r.AddedMassKg,
-                AchievedThrustToWeight = r.AchievedThrustToWeight,
-                MaxSupportedShipMassKg = r.MaxSupportedShipMassKg,
-                ShipMassKg = shipMass,
-                ResourceRateTotal = r.ResourceRateTotal,
-                ResourceName = FriendlyResourceName(resource?.Name),
-                ResourceUnits = resource?.FlowRateUnits,
-                Provenance = r.Provenance,
-            });
-        }
+        // The working table answers the different question — what closes the remaining gap.
+        Split(Project(_sizer.SizeAll(withLoadout), shipMass).ToList(), Remaining);
 
-        RebuildFamilies();
+        UpdateConfigurator(withLoadout);
     }
 
-    /// <summary>Splits the flat results into families plus the folded-away remainder.</summary>
-    private void RebuildFamilies()
-    {
-        Families.Clear();
-        Unusable.Clear();
+    /// <summary>Turns sizing results into rows, feasible first and cheapest leading.</summary>
+    private IEnumerable<ThrusterResultViewModel> Project(
+        IEnumerable<ThrusterSizing> sized, double shipMassKg) =>
+        sized
+            .OrderByDescending(r => r.IsFeasible)
+            .ThenBy(r => r.AddedMassKg)
+            .ThenBy(r => r.ThrusterName, StringComparer.Ordinal)
+            .Select(r =>
+            {
+                var resource = _index.Resource(r.ResourceId);
+                var thruster = _index.Thruster(r.ThrusterId);
 
-        foreach (var row in Results.Where(r => !r.IsFeasible))
+                return new ThrusterResultViewModel
+                {
+                    Name = r.ThrusterName,
+                    Family = FamilyOf(thruster),
+                    SizeCm = thruster?.SizeCm ?? 0,
+                    Status = r.Status,
+                    Count = r.Count,
+                    AddedMassKg = r.AddedMassKg,
+                    AchievedThrustToWeight = r.AchievedThrustToWeight,
+                    MaxSupportedShipMassKg = r.MaxSupportedShipMassKg,
+                    ShipMassKg = shipMassKg,
+                    ResourceRateTotal = r.ResourceRateTotal,
+                    ResourceName = FriendlyResourceName(resource?.Name),
+                    ResourceUnits = resource?.FlowRateUnits,
+                    Provenance = r.Provenance,
+                };
+            });
+
+    /// <summary>Updates the placed rows and the shortfall the loadout still leaves.</summary>
+    private void UpdateConfigurator(SizingRequest withLoadout)
+    {
+        var totals = _sizer.Evaluate(withLoadout);
+
+        foreach (var row in ConfiguratorRows)
         {
-            Unusable.Add(row);
+            var thruster = _index.Thruster(row.Id);
+            if (thruster is null) continue;
+
+            var sizing = _sizer.Size(thruster, withLoadout);
+
+            row.CanContribute = sizing.IsFeasible;
+            row.NetContributionN = sizing.NetContributionNEach;
         }
 
+        LoadoutFraction = Math.Clamp(totals.Fraction, 0, 1);
+        LoadoutIsSatisfied = totals.IsSatisfied;
+        LoadoutHasUnknownMass = totals.HasUnknownMass;
+
+        LoadoutSummary = totals.ThrusterCount == 0
+            ? "Nothing placed yet."
+            : $"{totals.ThrusterCount} thrusters · +{totals.AddedMassKg:N0} kg · "
+              + $"{totals.EffectiveThrustN / 1000:N0} of {totals.RequiredThrustN / 1000:N0} kN";
+
+        ShortfallText = totals.IsSatisfied
+            ? "Lifts off."
+            : $"{totals.RemainingThrustN / 1000:N0} kN still needed";
+
+        OnPropertyChanged(nameof(HasPlacedThrusters));
+    }
+
+    /// <summary>Splits rows into families plus the folded-away remainder, into a table.</summary>
+    private static void Split(IReadOnlyList<ThrusterResultViewModel> rows, ThrusterTableViewModel table)
+    {
         // Families lead with the cheapest option they can offer, so the best answer overall is the
-        // first row on screen — the same ordering the flat list had, one level up.
-        var families = Results
+        // first row on screen.
+        var families = rows
             .Where(r => r.IsFeasible)
             .GroupBy(r => r.Family, StringComparer.Ordinal)
             .OrderBy(g => g.Min(r => r.AddedMassKg))
-            .ThenBy(g => g.Key, StringComparer.Ordinal);
-
-        foreach (var family in families)
-        {
+            .ThenBy(g => g.Key, StringComparer.Ordinal)
             // Within a family, ascending size: the progression is the thing worth reading, and it
             // makes "one size up" an adjacent row rather than a search.
-            Families.Add(new ThrusterFamilyViewModel(
-                family.Key,
-                [.. family.OrderBy(r => r.SizeCm).ThenBy(r => r.Name, StringComparer.Ordinal)]));
-        }
+            .Select(g => new ThrusterFamilyViewModel(
+                g.Key,
+                [.. g.OrderBy(r => r.SizeCm).ThenBy(r => r.Name, StringComparer.Ordinal)]));
 
-        OnPropertyChanged(nameof(HasUnusable));
-        OnPropertyChanged(nameof(UnusableSummary));
+        table.Set(families, rows.Where(r => !r.IsFeasible));
     }
 
     /// <summary>
@@ -755,22 +847,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (MassEntryMode == MassEntryMode.Direct)
         {
-            return Math.Max(0, DirectMassKg);
+            return Math.Max(0, DirectMassKg ?? 0);
         }
 
-        var total = Math.Max(0, HullMassKg);
+        var total = Math.Max(0, HullMassKg ?? 0);
 
         foreach (var row in Containers)
         {
-            if (row.Count <= 0) continue;
-            total += row.Count * (row.BlockMassKg ?? 0);
-            total += row.Count * row.CapacityKg * cargoFill;
+            if (row.Fitted <= 0) continue;
+            total += row.Fitted * (row.BlockMassKg ?? 0);
+            total += row.Fitted * row.CapacityKg * cargoFill;
         }
 
         foreach (var row in Tanks)
         {
-            if (row.Count <= 0) continue;
-            total += row.Count * (row.BlockMassKg ?? 0);
+            if (row.Fitted <= 0) continue;
+            total += row.Fitted * (row.BlockMassKg ?? 0);
         }
 
         return total;
@@ -837,6 +929,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
             .OrderBy(p => p.Availability)
             .ThenBy(p => p.Name, StringComparer.Ordinal);
     }
+
+    /// <summary>
+    /// Every thruster the user could place, in the same order the reference table groups them.
+    /// </summary>
+    /// <remarks>
+    /// Unimplemented blocks are excluded here, unlike in the reference table: "does this exist
+    /// yet?" is worth answering, but offering a spinner for something that cannot be built is not.
+    /// </remarks>
+    private IEnumerable<ConfiguratorRowViewModel> BuildConfiguratorRows() =>
+        _data.Thrusters
+            .Where(t => t.Implemented)
+            .Select(t => new ConfiguratorRowViewModel
+            {
+                Id = t.Id,
+                Name = t.Name,
+                SizeCm = t.SizeCm,
+                Family = FamilyOf(t),
+            })
+            .OrderBy(r => r.Family, StringComparer.Ordinal)
+            .ThenBy(r => r.SizeCm);
 
     private IEnumerable<StorageRowViewModel> BuildStorage(bool isTank)
     {

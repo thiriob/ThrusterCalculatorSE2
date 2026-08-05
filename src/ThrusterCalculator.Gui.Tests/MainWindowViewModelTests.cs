@@ -356,6 +356,90 @@ public class MainWindowViewModelTests
         Assert.Same(target, vm.SelectedPlanetItem?.Planet);
     }
 
+    // ── configurator ──────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void PlacingThrustersClosesTheGap()
+    {
+        var vm = Create();
+        var row = vm.ConfiguratorRows.First(r => r.CanContribute);
+
+        Assert.False(vm.HasPlacedThrusters);
+        var before = vm.LoadoutFraction;
+
+        row.Count = 2;
+
+        Assert.True(vm.HasPlacedThrusters);
+        Assert.True(vm.LoadoutFraction > before);
+        Assert.Contains("2 thrusters", vm.LoadoutSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnoughThrustersSatisfiesTheRequirement()
+    {
+        var vm = Create();
+        var row = vm.ConfiguratorRows.First(r => r.CanContribute);
+
+        row.Count = 999;
+
+        Assert.True(vm.LoadoutIsSatisfied);
+        Assert.Equal(1, vm.LoadoutFraction, 6);
+        Assert.Contains("Lifts off", vm.ShortfallText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheReferenceTableIgnoresWhatIsPlacedButTheWorkingOneDoesNot()
+    {
+        // The two tables answer different questions, and that difference is the whole point of
+        // having both: one is the rule of thumb, the other is what finishes the job.
+        var vm = Create();
+        var row = vm.ConfiguratorRows.First(r => r.CanContribute);
+
+        var referenceBefore = vm.SingleType.Families.First().Rows.First().Count;
+        var remainingBefore = vm.Remaining.Families.First().Rows.First().Count;
+
+        row.Count = 3;
+
+        Assert.Equal(referenceBefore, vm.SingleType.Families.First().Rows.First().Count);
+        Assert.True(vm.Remaining.Families.First().Rows.First().Count < remainingBefore);
+    }
+
+    [Fact]
+    public void NetContributionIsShownAndIsLessThanRatedThrust()
+    {
+        // The number that stops the shortfall looking like broken arithmetic.
+        var vm = Create();
+        var row = vm.ConfiguratorRows.First(r => r.CanContribute);
+
+        Assert.True(row.NetContributionN > 0);
+        Assert.Contains("kN each", row.NetContributionText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ClearingEmptiesTheLoadout()
+    {
+        var vm = Create();
+        vm.ConfiguratorRows.First(r => r.CanContribute).Count = 4;
+        Assert.True(vm.HasPlacedThrusters);
+
+        vm.ClearLoadoutCommand.Execute(null);
+
+        Assert.False(vm.HasPlacedThrusters);
+        Assert.All(vm.ConfiguratorRows, r => Assert.Equal(0, r.Count));
+    }
+
+    [Fact]
+    public void ConfiguratorOffersOnlyBlocksThatExistInThisBuild()
+    {
+        // The reference table lists unimplemented blocks so "does this exist yet?" has an answer;
+        // offering a spinner for something unbuildable would not.
+        var vm = Create();
+
+        Assert.DoesNotContain(vm.ConfiguratorRows,
+            r => r.Name.Contains("Underwater", StringComparison.Ordinal));
+        Assert.NotEmpty(vm.ConfiguratorRows);
+    }
+
     // ── reloading after a rebuild ─────────────────────────────────────────────────────────────
 
     [Fact]
@@ -437,7 +521,7 @@ public class MainWindowViewModelTests
         var vm = Create();
 
         vm.MassEntryMode = MassEntryMode.Direct;
-        Assert.Equal("CONFIGURATIONS", vm.ConfigurationsHeading);
+        Assert.Equal("IF YOU USE ONE TYPE", vm.ConfigurationsHeading);
 
         vm.MassEntryMode = MassEntryMode.Storage;
         vm.SelectedPresetIndex = 0;
