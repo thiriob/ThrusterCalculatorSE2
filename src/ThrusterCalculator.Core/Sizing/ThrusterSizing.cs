@@ -59,6 +59,22 @@ public sealed record ThrusterSizing
     /// <summary>Usable thrust from one thruster here, in newtons.</summary>
     public double EffectiveThrustNEach { get; init; }
 
+    /// <summary>
+    /// What one more of these actually buys, in newtons.
+    /// </summary>
+    /// <remarks>
+    /// Its effective thrust <em>less</em> the extra requirement its own weight creates:
+    /// <c>T·E − R·g·m</c>. This is the number a configurator's arithmetic is built from, and the
+    /// one that must be on screen — a user who adds a 100 kN thruster and sees the shortfall drop
+    /// by 95 kN will otherwise read it as a bug rather than as physics.
+    /// <para>
+    /// It is also the sign test for feasibility: at or below zero, no quantity of this thruster
+    /// ever lifts the ship, and adding one makes the shortfall <em>worse</em>. Rejected loadouts
+    /// report <see cref="SizingStatus.CannotLiftOwnWeight"/> rather than a negative figure.
+    /// </para>
+    /// </remarks>
+    public double NetContributionNEach { get; init; }
+
     /// <summary>Usable thrust from all of them, in newtons.</summary>
     public double TotalThrustN { get; init; }
 

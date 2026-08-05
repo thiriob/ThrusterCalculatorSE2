@@ -39,7 +39,7 @@
     — so a config can be traced back to the build that produced it.
   -->
   <PropertyGroup>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
   </PropertyGroup>
 
   <!--

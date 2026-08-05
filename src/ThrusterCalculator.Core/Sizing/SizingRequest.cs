@@ -20,4 +20,13 @@ public sealed record SizingRequest
     /// acceleration to spare.
     /// </summary>
     public double TargetThrustToWeight { get; init; } = 1.0;
+
+    /// <summary>
+    /// Thrusters already committed to, which every proposal sizes around.
+    /// </summary>
+    /// <remarks>
+    /// Empty by default, which is exactly v1's behaviour — so the configurator is a generalisation
+    /// of the original question rather than a second code path beside it.
+    /// </remarks>
+    public Loadout Placed { get; init; } = Loadout.Empty;
 }

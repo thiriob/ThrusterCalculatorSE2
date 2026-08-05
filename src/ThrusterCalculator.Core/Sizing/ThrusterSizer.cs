@@ -66,6 +66,58 @@ public sealed class ThrusterSizer
             : _engine.BlockMassKg(occupiedCells.Value, density.MassCurveModifier);
     }
 
+    /// <summary>
+    /// What a placed loadout delivers, and what it still leaves to find.
+    /// </summary>
+    /// <remarks>
+    /// The requirement is computed <em>including</em> the placed thrusters' own weight, so it rises
+    /// as the loadout grows. That is the whole reason a budget cannot be worked out once and
+    /// counted down — see <see cref="ThrusterSizing.NetContributionNEach"/> for the figure that
+    /// makes the arithmetic legible to a user.
+    /// </remarks>
+    public LoadoutTotals Evaluate(SizingRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var thrust = 0.0;
+        var mass = 0.0;
+        var unknownMass = false;
+
+        foreach (var placed in request.Placed)
+        {
+            var thruster = _index.Thruster(placed.ThrusterId);
+            if (thruster is null || !thruster.Implemented) continue;
+
+            if (thruster.ThrustNewtons is { } rated)
+            {
+                var (effectiveness, _) = EffectivenessFor(thruster, request.Environment);
+                thrust += placed.Count * rated * effectiveness;
+            }
+
+            if (BlockMassKg(thruster.Density, thruster.OccupiedCells) is { } each)
+            {
+                mass += placed.Count * each;
+            }
+            else
+            {
+                // Counted as a gap rather than as zero: a thruster of unknown mass understates the
+                // requirement, which is the direction that produces a ship that does not fly.
+                unknownMass = true;
+            }
+        }
+
+        var weightPerKg = request.TargetThrustToWeight * request.Environment.GravityMetresPerSecondSquared;
+
+        return new LoadoutTotals
+        {
+            ThrusterCount = request.Placed.TotalThrusters,
+            EffectiveThrustN = thrust,
+            AddedMassKg = mass,
+            RequiredThrustN = weightPerKg * (request.ShipMassKg + mass),
+            HasUnknownMass = unknownMass,
+        };
+    }
+
     /// <summary>Sizes every thruster in the config, in declaration order.</summary>
     public IReadOnlyList<ThrusterSizing> SizeAll(SizingRequest request)
     {
@@ -121,6 +173,12 @@ public sealed class ThrusterSizer
         // thrust-to-weight sizing degenerate — see the zero-gravity branch below.
         var weightPerKg = ratio * gravity;
 
+        // Whatever is already placed shifts both sides of the inequality: its mass joins the ship,
+        // its thrust reduces what remains to find. With an empty loadout these are zero and the
+        // arithmetic is identical to v1's.
+        var placed = Evaluate(request);
+        var shipMass = request.ShipMassKg + placed.AddedMassKg;
+
         if (weightPerKg <= 0)
         {
             return new ThrusterSizing
@@ -130,9 +188,10 @@ public sealed class ThrusterSizer
                 Status = SizingStatus.Feasible,
                 Count = 0,
                 ThrusterMassKgEach = thrusterMass,
-                TotalMassKg = request.ShipMassKg,
+                TotalMassKg = shipMass,
                 Effectiveness = effectiveness,
                 EffectiveThrustNEach = effectiveThrust,
+                NetContributionNEach = effectiveThrust,
                 AchievedThrustToWeight = double.PositiveInfinity,
                 MaxSupportedShipMassKg = double.PositiveInfinity,
                 ResourceId = thruster.ConsumedResource?.Resource,
@@ -141,16 +200,22 @@ public sealed class ThrusterSizer
             };
         }
 
+        // The denominator is what one more of these actually buys: its thrust, less the extra
+        // requirement its own weight creates. Non-positive means no quantity ever works.
         var denominator = effectiveThrust - (weightPerKg * thrusterMass);
         if (denominator <= 0)
         {
             return ThrusterSizing.Rejected(thruster, SizingStatus.CannotLiftOwnWeight, effectiveness);
         }
 
-        var count = (int)Math.Ceiling(weightPerKg * request.ShipMassKg / denominator);
+        // Thrust still to find, after what is already placed. Never negative: an over-provisioned
+        // loadout needs none of these, not a negative number of them.
+        var shortfall = Math.Max(0, (weightPerKg * shipMass) - placed.EffectiveThrustN);
+
+        var count = (int)Math.Ceiling(shortfall / denominator);
         var addedMass = count * thrusterMass;
-        var totalMass = request.ShipMassKg + addedMass;
-        var totalThrust = count * effectiveThrust;
+        var totalMass = shipMass + addedMass;
+        var totalThrust = placed.EffectiveThrustN + (count * effectiveThrust);
 
         return new ThrusterSizing
         {
@@ -163,9 +228,10 @@ public sealed class ThrusterSizer
             TotalMassKg = totalMass,
             Effectiveness = effectiveness,
             EffectiveThrustNEach = effectiveThrust,
+            NetContributionNEach = denominator,
             TotalThrustN = totalThrust,
             AchievedThrustToWeight = totalMass > 0 ? totalThrust / (totalMass * gravity) : double.PositiveInfinity,
-            MaxSupportedShipMassKg = count * denominator / weightPerKg,
+            MaxSupportedShipMassKg = (placed.EffectiveThrustN + (count * denominator)) / weightPerKg,
             ResourceId = thruster.ConsumedResource?.Resource,
             ResourceRateTotal = thruster.ConsumedResource is { } r ? count * r.RatePerThrust : null,
             Provenance = provenance,
