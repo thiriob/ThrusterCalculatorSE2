@@ -362,9 +362,13 @@
             </ScrollViewer>
 
             <!-- ── configurator: the answer ─────────────────────────────── -->
-            <DockPanel Grid.Column="1" Margin="0,0,12,0">
-
-                <StackPanel DockPanel.Dock="Top">
+            <!-- One scroller for the whole column. Docking the pieces made the configurator absorb
+                 every pixel a shrinking window took away, so its list collapsed while the cards
+                 above and below kept full height. Scrolling the column instead keeps every group
+                 at its natural size — the curve simply waits further down. -->
+            <ScrollViewer Grid.Column="1" Margin="0,0,12,0"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
                     <Border Classes="card">
                         <StackPanel Spacing="8">
                             <TextBlock Classes="h boxed" Text="LOAD"
@@ -406,60 +410,14 @@
                         </StackPanel>
                     </Border>
 
-                </StackPanel>
-
-                <!-- The running total, pinned below the list so it never scrolls out of sight —
-                     it is the thing you are steering by. -->
-                <StackPanel DockPanel.Dock="Bottom">
-
-                    <!-- MOCKUP (Roadmap v3). Fixed invented data; does not react to anything. -->
-                    <Border Classes="card" Margin="0,8,0,0">
-                        <StackPanel>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Grid.Column="0" Classes="h boxed" Text="CLIMB PROFILE" />
-                                <Border Grid.Column="1" Background="#7A5200" CornerRadius="3"
-                                        Padding="6,1" Margin="0,0,0,6" VerticalAlignment="Top">
-                                    <TextBlock Text="MOCKUP" FontSize="10" Foreground="White" />
-                                </Border>
-                            </Grid>
-
-                            <c:ClimbProfileChart Height="230"
-                                                 Samples="{Binding ClimbSamples}"
-                                                 BandLabels="{Binding ClimbBands}"
-                                                 TargetRatio="{Binding TargetThrustToWeight}" />
-
-                            <TextBlock Classes="dim" TextWrapping="Wrap" Margin="0,6,0,0"
-                                       Text="{Binding ClimbCaption}" />
-                        </StackPanel>
-                    </Border>
-
-                    <Border Classes="card" Margin="0,8,0,0">
-                        <StackPanel Spacing="6">
-                            <ProgressBar Minimum="0" Maximum="1" Height="6"
-                                         Value="{Binding LoadoutFraction}" />
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Grid.Column="0" Classes="dim"
-                                           Text="{Binding LoadoutSummary}" TextWrapping="Wrap" />
-                                <TextBlock Grid.Column="1" FontWeight="SemiBold" Margin="8,0,0,0"
-                                           Text="{Binding ShortfallText}" />
-                            </Grid>
-                            <TextBlock Classes="dim" TextWrapping="Wrap" Foreground="#D08A3E"
-                                       IsVisible="{Binding LoadoutHasUnknownMass}"
-                                       Text="&#x26A0; A placed thruster has unknown mass, so the requirement above is understated." />
-                        </StackPanel>
-                    </Border>
-                    <TextBlock Classes="dim" Margin="0,6,0,0" Text="{Binding Assumption}" />
-                </StackPanel>
-
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                    <Border Classes="card">
-                      <StackPanel>
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Classes="h boxed" Text="CONFIGURATOR" />
-                            <Button Grid.Column="1" Content="Clear" Margin="0,0,0,6"
-                                    IsVisible="{Binding HasPlacedThrusters}"
-                                    Command="{Binding ClearLoadoutCommand}" />
-                        </Grid>
+                <Border Classes="card">
+                  <StackPanel>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Classes="h boxed" Text="CONFIGURATOR" />
+                        <Button Grid.Column="1" Content="Clear" Margin="0,0,0,6"
+                                IsVisible="{Binding HasPlacedThrusters}"
+                                Command="{Binding ClearLoadoutCommand}" />
+                    </Grid>
 
                         <ItemsControl ItemsSource="{Binding ConfiguratorFamilies}">
                             <ItemsControl.ItemTemplate>
@@ -484,10 +442,48 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                      </StackPanel>
+
+                    <StackPanel Spacing="6" Margin="0,8,0,0">
+                        <Separator />
+                        <ProgressBar Minimum="0" Maximum="1" Height="6"
+                                     Value="{Binding LoadoutFraction}" />
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Classes="dim"
+                                       Text="{Binding LoadoutSummary}" TextWrapping="Wrap" />
+                            <TextBlock Grid.Column="1" FontWeight="SemiBold" Margin="8,0,0,0"
+                                       Text="{Binding ShortfallText}" />
+                        </Grid>
+                        <TextBlock Classes="dim" TextWrapping="Wrap" Foreground="#D08A3E"
+                                   IsVisible="{Binding LoadoutHasUnknownMass}"
+                                   Text="&#x26A0; A placed thruster has unknown mass, so the requirement above is understated." />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+
+                    <Border Classes="card" Margin="0,8,0,0">
+                        <StackPanel>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Classes="h boxed" Text="CLIMB PROFILE" />
+                                <Border Grid.Column="1" Background="#7A5200" CornerRadius="3"
+                                        Padding="6,1" Margin="0,0,0,6" VerticalAlignment="Top">
+                                    <TextBlock Text="MOCKUP" FontSize="10" Foreground="White" />
+                                </Border>
+                            </Grid>
+
+                            <c:ClimbProfileChart Height="230"
+                                                 Samples="{Binding ClimbSamples}"
+                                                 Bands="{Binding ClimbBands}"
+                                                 MaxRatio="{Binding ClimbMaxRatio}"
+                                                 TargetSamples="{Binding ClimbTargetSamples}" />
+
+                            <TextBlock Classes="dim" TextWrapping="Wrap" Margin="0,6,0,0"
+                                       Text="{Binding ClimbCaption}" />
+                        </StackPanel>
                     </Border>
-                </ScrollViewer>
-            </DockPanel>
+
+                    <TextBlock Classes="dim" Margin="0,6,0,0" Text="{Binding Assumption}" />
+                </StackPanel>
+            </ScrollViewer>
 
             <!-- ── reference ────────────────────────────────────────────── -->
             <ScrollViewer Grid.Column="2" HorizontalScrollBarVisibility="Disabled">

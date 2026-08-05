@@ -406,31 +406,91 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// </remarks>
     public IReadOnlyList<ClimbSample> ClimbSamples { get; } = BuildMockClimb();
 
-    public IReadOnlyList<string> ClimbBands { get; } =
-        ["Space", "Atmosphere edge", "Ground"];
+    /// <summary>
+    /// Named heights, <b>ground first</b> and not evenly spaced.
+    /// </summary>
+    /// <remarks>
+    /// Altitude 0 is the bottom of the plot, so the list has to start where the ship starts.
+    /// The spacing is real: on Verdure the atmosphere ends at 1.15 planet radii while gravity
+    /// reaches 1.5, so the air is a thin skin over the bottom third of the climb.
+    /// </remarks>
+    public IReadOnlyList<ClimbBand> ClimbBands { get; } =
+        [new ClimbBand("Ground", 0), new ClimbBand("Atmosphere edge", 0.3), new ClimbBand("Space", 1)];
+
+    /// <summary>Right-hand end of the acceleration axis, in m/s².</summary>
+    public double ClimbMaxRatio => 6.0;
+
+    /// <summary>The margin the user asked for, which shrinks with gravity rather than staying flat.</summary>
+    public IReadOnlyList<ClimbSample> ClimbTargetSamples =>
+        [.. BuildMockGravity().Select(g => new ClimbSample(g.Altitude, (Ratio - 1) * g.NetAcceleration))];
 
     public string ClimbCaption =>
-        "Placeholder — invented numbers, fixed shape. Real curve needs the gravity falloff "
-        + "extracted and the ramp shapes verified in game.";
+        "Placeholder — an invented ship, but the curve follows the game's own model. It mixes "
+        + "atmospheric and ion: atmospheric fades as the air thins, ion only wakes up once it has, "
+        + "and the dip below zero between them is where the ship stops climbing. At the top the "
+        + "curve settles at plain thrust over mass — how briskly it accelerates in space. Real "
+        + "curves need the gravity falloff extracted and both ramp shapes verified in game.";
 
-    private static IReadOnlyList<ClimbSample> BuildMockClimb()
-    {
-        // Rises briefly as gravity falls, then collapses as the air thins and the atmospheric
-        // thrusters lose their bite — crossing 1.0 well before space.
-        var samples = new List<ClimbSample>();
+    /// <summary>
+    /// A plausible mixed loadout climbing away from Verdure.
+    /// </summary>
+    /// <remarks>
+    /// <b>The ship is invented; the physics is not.</b> An earlier version of this mock was a
+    /// hand-drawn sigmoid plus a constant, which asymptoted to 0.12 for no reason anyone could
+    /// explain — a pure atmospheric ship reaches exactly zero, because atmospheric thrust is zero
+    /// below 0.2 air density. Fudging the shape produced a picture that could not be reasoned
+    /// about, which is worse than no picture.
+    /// <para>
+    /// So this is computed from the rules already extracted: air density falls linearly from the
+    /// surface to nothing at the atmosphere edge; atmospheric effectiveness ramps between 0.2 and
+    /// 0.8 density and ion ramps the opposite way; gravity falls off as a power of distance. Only
+    /// the falloff exponent is guessed, and only because <c>FallOffPower</c> is not extracted yet.
+    /// </para>
+    /// <para>
+    /// The chosen loadout stalls in the handover: atmospheric has faded before ion is strong enough
+    /// to carry it, and the curve dips under 1.0 in a narrow band just below the atmosphere edge.
+    /// That gap is exactly what altitude exists to reveal, and it is invisible from the ground.
+    /// </para>
+    /// </remarks>
+    /// <summary>Altitude 1 is the edge of the gravity well (1.5 R); the atmosphere ends at 1.15 R.</summary>
+    private const double AtmosphereTop = 0.3;
 
-        for (var i = 0; i <= 40; i++)
+    /// <summary>Surface gravity, and what each family would give at the surface, in m/s².</summary>
+    private const double SurfaceGravity = 9.81;
+    private const double AtmosphericThrust = 1.40 * SurfaceGravity;
+    private const double IonThrust = 0.35 * SurfaceGravity;
+
+    /// <summary>
+    /// The one guessed number here, and only until <c>FallOffPower</c> is extracted.
+    /// </summary>
+    /// <remarks>
+    /// An exponent near 8 matches the only reading taken in game — 0.33 g at the boundary of space
+    /// (Research §5.3.1) — and shows gravity falling far faster than an inverse square would.
+    /// </remarks>
+    private const double FallOffPower = 8;
+
+    /// <summary>Gravity at each height, carried as a sample list so the target curve can reuse it.</summary>
+    private static IReadOnlyList<ClimbSample> BuildMockGravity() =>
+        [.. Enumerable.Range(0, 61)
+            .Select(i => i / 60.0)
+            .Select(a => new ClimbSample(a, SurfaceGravity * Math.Pow(1 / (1 + (0.5 * a)), FallOffPower)))];
+
+    private static IReadOnlyList<ClimbSample> BuildMockClimb() =>
+        [.. BuildMockGravity().Select(g =>
         {
-            var altitude = i / 40.0;
+            // Air thins linearly to nothing at the top of the atmosphere.
+            var airDensity = Math.Max(0, 1 - (g.Altitude / AtmosphereTop));
 
-            var gravityRelief = 1 + (0.45 * altitude);
-            var airLoss = 1 / (1 + Math.Exp((altitude - 0.45) * 11));
+            // The two ramps from ThrustClassesConfiguration, in opposite directions.
+            var atmospheric = Math.Clamp((airDensity - 0.2) / 0.6, 0, 1);
+            var ion = Math.Clamp((0.8 - airDensity) / 0.6, 0, 1);
 
-            samples.Add(new ClimbSample(altitude, 0.12 + (1.55 * gravityRelief * airLoss)));
-        }
+            var thrust = (AtmosphericThrust * atmospheric) + (IonThrust * ion);
 
-        return samples;
-    }
+            // Subtracting gravity rather than dividing by it is what keeps this finite and
+            // meaningful all the way up: at the top it is simply thrust over mass.
+            return new ClimbSample(g.Altitude, thrust - g.NetAcceleration);
+        })];
 
     // ── configurator ──────────────────────────────────────────────────────────────────────────
 
