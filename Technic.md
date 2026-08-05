@@ -538,8 +538,29 @@ Two artifacts ship, both portable zips, neither containing game data (§3.4):
 
 | | Size | Needs |
 |---|---|---|
-| self-contained | ~200 MB | nothing |
+| self-contained | ~260 MB | nothing |
 | runtime-dependent | ~30 MB | .NET 9 **Desktop** runtime — `tc.exe` carries WPF and WinForms |
+
+**Both are published single-file**, so a release folder is two executables and one sample config
+rather than 45 or 514 loose DLLs. That is a usability decision, not a technical one: a user opening a directory
+of 514 files cannot tell which starts the app.
+
+It costs the self-contained build ~60 MB, because single-file means each executable carries its own
+runtime instead of the two sharing one folder. Free for the runtime-dependent build.
+
+Where the size actually goes, for anyone tempted to attack it:
+
+| | |
+|---|---|
+| ~18 MB native | Skia, ANGLE, HarfBuzz — Avalonia renders every pixel itself, so it ships a graphics engine |
+| ~51 MB | WPF + WinForms, which **the GUI never touches**. Present only because `tc.exe` hosts SE2's assemblies and they bind `Microsoft.WindowsDesktop.App` |
+| the rest | base runtime and BCL |
+
+**Splitting them into separate folders to shed the 51 MB does not work** — each self-contained app
+then carries its own ~120 MB runtime, and the total goes up, not down. `PublishTrimmed` would cut
+more, but the Engine reflects into assemblies the trimmer cannot see and Avalonia is reflection-heavy
+too: the realistic outcome is a build that passes CI and fails on a user's machine, which is exactly
+what the `UseWindowsForms` bug already demonstrated.
 
 **Debug symbols are embedded, not shipped** (`DebugType=embedded`). Loose `.pdb` files were most of
 the download — `libSkiaSharp.pdb` alone is 80 MB — and packaging deletes every one. Ours live inside

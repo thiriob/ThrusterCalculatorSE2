@@ -81,7 +81,7 @@ public static class ProducerProcess
             $"extract --out \"{destination}\"", cancellation).ConfigureAwait(false);
 
         return exitCode == 0
-            ? new ProducerResult(true, "Rebuilt from your installed game. Restart to load it.")
+            ? new ProducerResult(true, "Rebuilt from your installed game.")
             : new ProducerResult(false, LastLine(stderr) ?? "The producer reported a failure.");
     }
 

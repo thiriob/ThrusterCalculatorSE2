@@ -22,10 +22,14 @@
 
     <!--
       Sample config so the app runs and demos on a clean clone. The repository ships no real
-      gamedata.json (Technic.md §3.4); a packaged release drops one beside the executable.
+      gamedata.json (Technic.md §3.4); the user generates one with the bundled tc.exe.
+
+      It lands beside the executable rather than in Assets\, so a release folder is a short list of
+      things a user might reasonably open — and the sample sits next to the gamedata.json that will
+      supersede it, which makes the relationship between the two obvious.
     -->
     <Content Include="Assets\sample-gamedata.json"
-             Link="Assets\sample-gamedata.json"
+             Link="sample-gamedata.json"
              CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

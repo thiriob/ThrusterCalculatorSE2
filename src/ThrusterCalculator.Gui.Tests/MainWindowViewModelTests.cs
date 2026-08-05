@@ -356,6 +356,77 @@ public class MainWindowViewModelTests
         Assert.Same(target, vm.SelectedPlanetItem?.Planet);
     }
 
+    // ── reloading after a rebuild ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RebuildingWithoutTheProducerLeavesEverythingIntact()
+    {
+        // No tc.exe in a test run, so the command takes its degradation path. The point is that a
+        // failed rebuild must not clear the catalogue or the user's inputs — the app has to be
+        // exactly as usable afterwards as before.
+        var vm = Create();
+        vm.MassEntryMode = MassEntryMode.Storage;
+        vm.Containers.First().Count = 3;
+        var planet = vm.SelectedPlanet;
+
+        await vm.RebuildCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsRebuilding);
+        Assert.NotEmpty(vm.DataMessage);
+        Assert.Same(planet, vm.SelectedPlanet);
+        Assert.Equal(3, vm.Containers.First().Count);
+        Assert.NotEmpty(vm.Results);
+    }
+
+    [Fact]
+    public void ReloadingKeepsWhatTheUserTyped()
+    {
+        // The point of reloading in place: new game data without asking anyone to restart, and
+        // without throwing away the ship they just described.
+        var vm = Create();
+        vm.MassEntryMode = MassEntryMode.Storage;
+        vm.HullMassKg = 250_000;
+        vm.TargetThrustToWeight = 1.4;
+        vm.Containers.First().Count = 3;
+
+        var planetId = vm.SelectedPlanet!.Id;
+        var planetCount = vm.Planets.Count;
+
+        vm.Reload(ConfigSource.Load());
+
+        Assert.Equal(planetId, vm.SelectedPlanet!.Id);
+        Assert.Equal(250_000, vm.HullMassKg);
+        Assert.Equal(1.4, vm.TargetThrustToWeight);
+        Assert.Equal(3, vm.Containers.First().Count);
+
+        // Refilled, not appended: a reload that doubled the catalogue would be very obvious in the
+        // UI and very easy to write.
+        Assert.Equal(planetCount, vm.Planets.Count);
+        Assert.NotEmpty(vm.Results);
+    }
+
+    [Fact]
+    public void StorageRowsAreSubscribedExactlyOnceAcrossReloads()
+    {
+        // Reload detaches before refilling. Miss that and each rebuild adds another handler, so one
+        // edit triggers N recalculations — invisible until it is slow.
+        var vm = Create();
+        vm.MassEntryMode = MassEntryMode.Storage;
+
+        vm.Reload(ConfigSource.Load());
+        vm.Reload(ConfigSource.Load());
+
+        var recalculations = 0;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(vm.ShipMassText)) recalculations++;
+        };
+
+        vm.Containers.First().Count = 1;
+
+        Assert.Equal(1, recalculations);
+    }
+
     // ── warnings and headings ─────────────────────────────────────────────────────────────────
 
     [Fact]

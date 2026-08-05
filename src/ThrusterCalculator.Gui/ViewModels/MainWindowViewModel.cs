@@ -27,10 +27,11 @@ public enum MassEntryMode
 /// <summary>Plan mode: departure planet plus ship mass in, thruster loadouts out.</summary>
 public sealed partial class MainWindowViewModel : ObservableObject
 {
-    private readonly GameData _data;
-    private readonly GameDataIndex _index;
-    private readonly CalculationEngine _engine;
-    private readonly ThrusterSizer _sizer;
+    // Not readonly: a rebuild swaps the config in place rather than restarting the app.
+    private GameData _data = null!;
+    private GameDataIndex _index = null!;
+    private CalculationEngine _engine = null!;
+    private ThrusterSizer _sizer = null!;
 
     /// <summary>Cargo fill for each preset. Tanks are always full — fuel is not optional.</summary>
     private static readonly (string Name, double Fill)[] Presets =
@@ -64,30 +65,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(settings);
 
-        _data = config.Data;
-        _index = new GameDataIndex(_data);
-        _engine = CalculationEngine.Create(_data.Models);
-        _sizer = new ThrusterSizer(_index, _engine);
+        Planets = [];
+        PlanetItems = [];
+        Containers = [];
+        Tanks = [];
 
-        Origin = config.Origin;
-        OriginDescription = config.Description;
-
-        Planets = new ObservableCollection<PlanetOption>(BuildPlanetOptions());
-        PlanetItems = new ObservableCollection<PlanetListItem>(BuildPlanetItems());
-        Containers = new ObservableCollection<StorageRowViewModel>(BuildStorage(isTank: false));
-        Tanks = new ObservableCollection<StorageRowViewModel>(BuildStorage(isTank: true));
-
-        foreach (var row in Containers.Concat(Tanks))
-        {
-            row.PropertyChanged += OnStorageChanged;
-        }
-
-        // Restore the remembered planet, falling back to the first — a planet can vanish between
-        // runs when the config is rebuilt, and that must not leave the app with nothing selected.
-        var remembered = Planets.FirstOrDefault(
-            p => string.Equals(p.Id, settings.SelectedPlanetId, StringComparison.Ordinal));
-
-        SelectedPlanet = remembered ?? Planets.FirstOrDefault();
+        Load(config, settings.SelectedPlanetId);
 
         // Only the override is restored, never a gravity we read from the config: a stored copy of
         // an extracted value would go stale the moment the config is rebuilt, and would then
@@ -98,6 +81,85 @@ public sealed partial class MainWindowViewModel : ObservableObject
         // Ratio is planet-independent, so it always applies.
         TargetThrustToWeight = settings.TargetThrustToWeight;
 
+        Recalculate();
+    }
+
+    /// <summary>
+    /// Points the view model at a config, rebuilding everything derived from it.
+    /// </summary>
+    /// <remarks>
+    /// Called from the constructor and again after a rebuild, so new game data appears without
+    /// restarting. Telling a user to relaunch is asking them to do by hand what the app can do
+    /// itself — and it would throw away every number they had typed.
+    /// <para>
+    /// Collections are refilled rather than replaced, so the bindings attached to them survive.
+    /// Selections are restored <em>by id</em>: after a rebuild every object here is new, and the
+    /// old instances would match nothing.
+    /// </para>
+    /// </remarks>
+    private void Load(LoadedConfig config, string? selectPlanetId)
+    {
+        _data = config.Data;
+        _index = new GameDataIndex(_data);
+        _engine = CalculationEngine.Create(_data.Models);
+        _sizer = new ThrusterSizer(_index, _engine);
+
+        Origin = config.Origin;
+        OriginDescription = config.Description;
+
+        // Detach first: these rows are about to be discarded, and a live handler on an orphan
+        // would keep recalculating for a config nobody is looking at.
+        foreach (var row in Containers.Concat(Tanks))
+        {
+            row.PropertyChanged -= OnStorageChanged;
+        }
+
+        // Carry the user's quantities across. They described their ship; a data rebuild should not
+        // make them describe it again.
+        var counts = Containers.Concat(Tanks)
+            .Where(r => r.Count > 0)
+            .ToDictionary(r => r.Id, r => r.Count, StringComparer.Ordinal);
+
+        Refill(Containers, BuildStorage(isTank: false));
+        Refill(Tanks, BuildStorage(isTank: true));
+
+        foreach (var row in Containers.Concat(Tanks))
+        {
+            if (counts.TryGetValue(row.Id, out var count)) row.Count = count;
+            row.PropertyChanged += OnStorageChanged;
+        }
+
+        Refill(Planets, BuildPlanetOptions());
+        Refill(PlanetItems, BuildPlanetItems());
+
+        // A planet can vanish between rebuilds; that must not leave the app with nothing selected.
+        SelectedPlanet =
+            Planets.FirstOrDefault(p => string.Equals(p.Id, selectPlanetId, StringComparison.Ordinal))
+            ?? Planets.FirstOrDefault();
+
+        OnPropertyChanged(nameof(Origin));
+        OnPropertyChanged(nameof(OriginDescription));
+        OnPropertyChanged(nameof(IsSampleData));
+        OnPropertyChanged(nameof(SampleDataAdvice));
+        OnPropertyChanged(nameof(DataStatus));
+        OnPropertyChanged(nameof(HasExtractionWarnings));
+        OnPropertyChanged(nameof(ExtractionWarningSummary));
+    }
+
+    private static void Refill<T>(ObservableCollection<T> target, IEnumerable<T> items)
+    {
+        target.Clear();
+        foreach (var item in items) target.Add(item);
+    }
+
+    /// <summary>
+    /// Swaps in a freshly built config without restarting, keeping the user's inputs.
+    /// </summary>
+    public void Reload(LoadedConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        Load(config, SelectedPlanet?.Id);
         Recalculate();
     }
 
@@ -112,9 +174,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         settings.TargetThrustToWeight = TargetThrustToWeight;
     }
 
-    public ConfigOrigin Origin { get; }
+    public ConfigOrigin Origin { get; private set; }
 
-    public string OriginDescription { get; }
+    public string OriginDescription { get; private set; } = string.Empty;
 
     public bool IsSampleData => Origin == ConfigOrigin.Sample;
 
@@ -206,13 +268,20 @@ public sealed partial class MainWindowViewModel : ObservableObject
         try
         {
             var result = await ProducerProcess.ExtractAsync(_rebuild.Token);
-            DataMessage = result.Message;
 
-            if (result.Succeeded)
+            if (!result.Succeeded)
             {
-                IsStale = false;
-                StalenessMessage = string.Empty;
+                DataMessage = result.Message;
+                return;
             }
+
+            // Swap the new data in without a restart, keeping the planet the user was looking at
+            // and everything they typed.
+            Reload(ConfigSource.Load());
+
+            IsStale = false;
+            StalenessMessage = string.Empty;
+            DataMessage = $"Rebuilt from game build {_data.Source.GameBuild}.";
         }
         catch (OperationCanceledException)
         {

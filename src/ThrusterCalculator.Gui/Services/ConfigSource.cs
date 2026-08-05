@@ -34,6 +34,16 @@ public static class ConfigSource
 {
     public const string FileName = "gamedata.json";
 
+    /// <summary>
+    /// The bundled fallback, beside the executable.
+    /// </summary>
+    /// <remarks>
+    /// Named so it cannot be mistaken for the real thing, and deliberately <em>not</em> called
+    /// <c>gamedata.json</c> — the ignore rules that keep Keen's numbers out of the repo would
+    /// otherwise swallow it (Technic.md §7.1).
+    /// </remarks>
+    public const string SampleFileName = "sample-gamedata.json";
+
     /// <summary>Loads the best available config, falling back to the bundled sample.</summary>
     public static LoadedConfig Load()
     {
@@ -68,7 +78,7 @@ public static class ConfigSource
     private static LoadedConfig LoadSample(string reason)
     {
         var assembly = Assembly.GetExecutingAssembly();
-        var sample = Path.Combine(AppContext.BaseDirectory, "Assets", "sample-gamedata.json");
+        var sample = Path.Combine(AppContext.BaseDirectory, SampleFileName);
 
         using var stream = File.OpenRead(sample);
         return new LoadedConfig(GameDataSerializer.Read(stream), ConfigOrigin.Sample, reason);
