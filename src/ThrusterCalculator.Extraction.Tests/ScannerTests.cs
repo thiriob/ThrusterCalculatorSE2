@@ -8,6 +8,10 @@ internal static class Fixtures
     public const string ThrusterType = "ThrusterDefinitionObjectBuilder";
 
     public static DefinitionSet Scan() => DefinitionScanner.Scan(DefRoot);
+
+    /// <summary>Scans one branch of the fixtures, for tests that need a definition to be absent.</summary>
+    public static DefinitionSet ScanSubtree(string relativePath) =>
+        DefinitionScanner.Scan(Path.Combine(DefRoot, relativePath));
 }
 
 public class DefinitionScannerTests

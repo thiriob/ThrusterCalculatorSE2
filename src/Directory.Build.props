@@ -11,11 +11,16 @@
 
     Matching the runtime the game was built and tested against removes a variable.
 
-    Everything is platform-neutral net9.0. That is a consequence of Technic.md §10.2.1:
-    the mass formula was decompiled and transcribed, so nothing loads SE2's assemblies and
-    no project needs a Windows-specific TFM. TcWindowsTargetFramework is defined but unused
-    — it is reserved for ThrusterCalculator.Engine, which is deliberately not created yet
-    (Technic.md §2.3) and would need net9.0-windows plus <UseWPF>true</UseWPF>.
+    Two TFMs, and the split is deliberate (Technic.md §2):
+
+      TcTargetFramework         net9.0          Model, Core, Extraction, Gui, every test project
+      TcWindowsTargetFramework  net9.0-windows  Engine and Cli only
+
+    Engine hosts SE2's own assemblies to read contentcache.vrb (Technic.md §10.2.0), so it
+    needs the Windows TFM plus <UseWPF>true</UseWPF>; Cli inherits that by referencing it.
+    Nothing else does, and nothing else should — Model and Core staying platform-neutral is
+    what keeps a web target open (Technic.md §9), and Extraction staying neutral is what
+    keeps it testable with no game installed.
   -->
   <PropertyGroup>
     <TcTargetFramework>net9.0</TcTargetFramework>

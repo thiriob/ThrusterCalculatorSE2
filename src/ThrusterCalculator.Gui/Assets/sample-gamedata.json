@@ -26,7 +26,7 @@
 
   "resources": [
     { "id": "samplePower", "name": "Electricity", "flowRateUnits": "Kilowatts", "storageUnits": "KilowattHours", "requiresConveyors": false },
-    { "id": "sampleFuel", "name": "Hydrogen", "flowRateUnits": "LitresPerSecond", "storageUnits": "Litres", "requiresConveyors": true }
+    { "id": "sampleFuel", "name": "Hydrogen", "flowRateUnits": "LitersPerSecond", "storageUnits": "Liters", "requiresConveyors": true }
   ],
 
   "thrustClasses": [

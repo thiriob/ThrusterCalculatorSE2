@@ -177,6 +177,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         foreach (var r in sized)
         {
+            var resource = _index.Resource(r.ResourceId);
+
             Results.Add(new ThrusterResultViewModel
             {
                 Name = r.ThrusterName,
@@ -187,7 +189,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 MaxSupportedShipMassKg = r.MaxSupportedShipMassKg,
                 ShipMassKg = shipMass,
                 ResourceRateTotal = r.ResourceRateTotal,
-                ResourceName = FriendlyResourceName(_index.Resource(r.ResourceId)?.Name),
+                ResourceName = FriendlyResourceName(resource?.Name),
+                ResourceUnits = resource?.FlowRateUnits,
                 Provenance = r.Provenance,
             });
         }

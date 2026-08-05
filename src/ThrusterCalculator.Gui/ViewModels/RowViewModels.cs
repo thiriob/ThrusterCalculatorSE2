@@ -51,6 +51,9 @@ public sealed class ThrusterResultViewModel
 
     public string? ResourceName { get; init; }
 
+    /// <summary>The resource's flow-rate units, as the game states them.</summary>
+    public string? ResourceUnits { get; init; }
+
     public Provenance Provenance { get; init; }
 
     public string CountText => IsFeasible ? $"{Count} ×" : "—";
@@ -80,9 +83,27 @@ public sealed class ThrusterResultViewModel
         }
     }
 
+    /// <summary>
+    /// Total draw, with units.
+    /// </summary>
+    /// <remarks>
+    /// The units are not decoration. Atmospheric and ion thrusters draw electricity in kilowatts
+    /// while hydrogen thrusters draw hydrogen in litres per second, and the raw figures differ by
+    /// orders of magnitude — 16 000 against 120 for the two largest. Printing bare numbers in one
+    /// column invites reading a hydrogen thruster as wildly more efficient (Research.md §3).
+    /// </remarks>
     public string DrawText => ResourceRateTotal is { } rate && ResourceName is not null
-        ? $"{rate:N0} {ResourceName}"
+        ? $"{rate:N0} {ShortUnits(ResourceUnits) ?? ResourceName}"
         : string.Empty;
+
+    private static string? ShortUnits(string? units) => units switch
+    {
+        "Kilowatts" => "kW",
+        "LitersPerSecond" => "L/s",
+        // An unrecognised unit falls back to the resource name rather than being printed raw:
+        // "9,375 SomeNewUnitEnumValue" reads as a bug, which it would be ours to notice.
+        _ => null,
+    };
 
     /// <summary>Why a loadout is not possible — the useful answer, where a bare 0 is not.</summary>
     public string StatusText => Status switch

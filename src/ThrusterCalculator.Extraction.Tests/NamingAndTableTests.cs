@@ -17,6 +17,15 @@ public class BlockNamingTests
         Assert.Equal(expected, BlockNaming.IdOf(block));
 
     [Theory]
+    [InlineData("Mostly Hollow", "mostlyHollow")]   // density filenames really do contain spaces
+    [InlineData("Hollow", "hollow")]
+    [InlineData("Electricity", "electricity")]
+    [InlineData("Ion", "ion")]                      // thrust class keys come from the game as-is
+    [InlineData("TestAtmo", "testAtmo")]
+    public void SlugIsCamelCaseWithSeparatorsRemoved(string name, string expected) =>
+        Assert.Equal(expected, BlockNaming.SlugOf(name));
+
+    [Theory]
     [InlineData("AtmosphericThruster250", 250)]
     [InlineData("HydrogenThruster50", 50)]
     [InlineData("AtmosphericThruster1000", 1000)]

@@ -24,6 +24,37 @@ public static partial class BlockNaming
     [GeneratedRegex(@"(?<!^)(?=[A-Z])")]
     private static partial Regex PascalCaseBoundary { get; }
 
+    /// <summary>Anything that cannot appear in a slug — spaces, punctuation, separators.</summary>
+    [GeneratedRegex(@"[^A-Za-z0-9]+")]
+    private static partial Regex SlugBoundary { get; }
+
+    /// <summary>
+    /// A camelCase id for a lookup-table entry, e.g. <c>"Mostly Hollow"</c> → <c>mostlyHollow</c>.
+    /// </summary>
+    /// <remarks>
+    /// Densities, resources and thrust classes are referenced by GUID in the game data, but the
+    /// config must not contain GUIDs (Schema.md R1) — a consumer should be writable by someone who
+    /// has never seen a <c>.def</c> file, and a user editing the file by hand (R5) needs to see
+    /// <c>"density": "hollow"</c>, not a 36-character hex string.
+    /// </remarks>
+    public static string SlugOf(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        var words = SlugBoundary.Split(name).Where(w => w.Length > 0).ToArray();
+        if (words.Length == 0) return string.Empty;
+
+        var slug = new StringBuilder();
+        for (var i = 0; i < words.Length; i++)
+        {
+            var word = words[i];
+            slug.Append(i == 0 ? char.ToLowerInvariant(word[0]) : char.ToUpperInvariant(word[0]));
+            slug.Append(word[1..]);
+        }
+
+        return slug.ToString();
+    }
+
     /// <summary>
     /// The block name a definition belongs to, taken from its filename.
     /// </summary>

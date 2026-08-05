@@ -37,7 +37,10 @@ public class GameDataExtractorTests
         var thruster = Extract().Thrusters.Single(t => t.Id == "testThruster");
 
         Assert.Equal(12345.5, thruster.ThrustNewtons);
-        Assert.Equal("TestAtmo", thruster.ThrustClass);
+
+        // The block states the game key "TestAtmo"; the config carries the slugged id, and it must
+        // match the entry in thrustClasses or the consumer silently loses the falloff model.
+        Assert.Equal("testAtmo", thruster.ThrustClass);
     }
 
     [Fact]
@@ -45,9 +48,30 @@ public class GameDataExtractorTests
     {
         // Density lives on the block definition, which is a different file with no reference back
         // to the thruster — only the composite links them.
-        var thruster = Extract().Thrusters.Single(t => t.Id == "testThruster");
+        var data = Extract();
+        var thruster = data.Thrusters.Single(t => t.Id == "testThruster");
 
-        Assert.Equal("cccccccc-0000-0000-0000-000000000001", thruster.Density);
+        Assert.Equal("testDensity", thruster.Density);
+
+        // The reference must actually land in the densities table. Asserting the id alone would
+        // pass just as happily on a dangling reference, which is the failure that matters.
+        Assert.Contains(data.Densities, d => d.Id == thruster.Density);
+    }
+
+    [Fact]
+    public void EmitsReadableIdsRatherThanGuids()
+    {
+        // Schema.md R1: no GUIDs in the config. R5: a user must be able to hand-edit it. Both fail
+        // the moment a 36-character reference leaks into a block.
+        var data = Extract();
+
+        Assert.All(data.Densities, d => Assert.False(Guid.TryParse(d.Id, out _)));
+        Assert.All(data.Resources, r => Assert.False(Guid.TryParse(r.Id, out _)));
+        Assert.All(data.Thrusters, t =>
+        {
+            Assert.False(Guid.TryParse(t.Density ?? string.Empty, out _));
+            Assert.False(Guid.TryParse(t.ConsumedResource?.Resource ?? string.Empty, out _));
+        });
     }
 
     [Fact]
@@ -90,6 +114,26 @@ public class GameDataExtractorTests
 
         Assert.Single(data.Densities);
         Assert.Equal(10, data.Densities[0].MassCurveModifier);
+
+        var resource = Assert.Single(data.Resources);
+        Assert.Equal("testPower", resource.Id);
+
+        // Name keeps the game's own string; only the id is slugged. Schema.md §4.2.
+        Assert.Equal("ResourceTestPower", resource.Name);
+    }
+
+    [Fact]
+    public void ExtractsThrustClassesIncludingTheInvertedAndSentinelForms()
+    {
+        // The two shapes that break a naive reader (Schema.md §4.3): ion expresses full thrust at
+        // *low* density, so min > max; hydrogen uses -1 to mean "no falloff at all".
+        var classes = Extract().ThrustClasses;
+
+        var ion = classes.Single(c => c.Id == "testIon");
+        Assert.True(ion.MinThrustAirDensity > ion.MaxThrustAirDensity);
+
+        var hydrogen = classes.Single(c => c.Id == "testHydrogen");
+        Assert.Equal(-1, hydrogen.MinThrustAirDensity);
     }
 
     [Fact]
@@ -105,7 +149,10 @@ public class GameDataExtractorTests
     [Fact]
     public void ReportsMissingThrustClassConfiguration()
     {
-        var data = Extract();
+        // Scanned from Blocks/ alone, so the configuration under System/ is out of scope — the
+        // degradation path, which must warn rather than quietly treat every thruster as falloff-free.
+        var data = new GameDataExtractor(Fixtures.ScanSubtree("Blocks"))
+            .Extract("0.0.0-test", "sha256:test");
 
         Assert.Empty(data.ThrustClasses);
         Assert.Contains(data.Warnings, w => w.Code == "missingThrustClasses");
@@ -150,7 +197,9 @@ public class DefinitionInheritanceTests
 
         var thruster = data.Thrusters.Single(t => t.Id == "testThrusterNoClass");
 
-        Assert.Equal("TestHydrogen", thruster.ThrustClass);
+        // Inherited as the game key "TestHydrogen", then slugged to the config id like any other.
+        Assert.Equal("testHydrogen", thruster.ThrustClass);
+        Assert.Contains(data.ThrustClasses, c => c.Id == thruster.ThrustClass);
     }
 
     [Fact]
@@ -164,6 +213,42 @@ public class DefinitionInheritanceTests
 
         Assert.Null(thruster.ThrustClass);
         Assert.Contains(data.Warnings, w => w.Code == "unresolvedThrustClass");
+    }
+
+    /// <summary>The block whose ConsumedResource states only Amount, inheriting its Type.</summary>
+    private const string ThrusterBlock = "bbbbbbbb-0000-0000-0000-000000000001";
+
+    private const string TemplateBlock = "bbbbbbbb-0000-0000-0000-000000000009";
+
+    [Fact]
+    public void ConsumedResourceTypeIsInheritedThroughAPartiallyRestatedObject()
+    {
+        // The real shape, and the reason a field-level walk is not enough: the block restates
+        // ConsumedResource carrying only Amount, so the object is present while the Type inside it
+        // is not. Reading the block's own file alone resolved 4 of 12 real thrusters — silently.
+        var data = ExtractWith(new FakeInheritance((ThrusterBlock, TemplateBlock)));
+
+        var thruster = data.Thrusters.Single(t => t.Id == "testThruster");
+
+        Assert.NotNull(thruster.ConsumedResource);
+        Assert.Equal("testPower", thruster.ConsumedResource.Resource);
+        Assert.Equal(42, thruster.ConsumedResource.RatePerThrust);
+
+        // And it must point at something really in the table, not just look plausible.
+        Assert.Contains(data.Resources, r => r.Id == thruster.ConsumedResource.Resource);
+    }
+
+    [Fact]
+    public void AnUnresolvableConsumedResourceIsWarnedRatherThanDroppedSilently()
+    {
+        // Without the base link the Type cannot be found. The old code returned null with no
+        // warning, so two whole thruster families lost their fuel figure and nothing said so.
+        var data = ExtractWith(new NoDefinitionInheritance());
+
+        var thruster = data.Thrusters.Single(t => t.Id == "testThruster");
+
+        Assert.Null(thruster.ConsumedResource);
+        Assert.Contains(data.Warnings, w => w.Code == "unresolvedConsumedResource");
     }
 
     [Fact]

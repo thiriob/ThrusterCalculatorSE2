@@ -96,23 +96,16 @@ public sealed class GameDataExtractor
     /// Walks <c>BaseGuid</c>, the game's own parent pointer. Blocks routinely omit what their base
     /// states: no cargo container declares a density, and the value sits one level up.
     /// </remarks>
-    private string? InheritedString(DefinitionFile? definition, string field)
-    {
-        var current = definition;
-        var guid = definition?.Guid;
+    private string? InheritedString(DefinitionFile? definition, string field) =>
+        BaseChain(definition)
+            .Select(d => d.GetString(field))
+            .FirstOrDefault(v => v is { Length: > 0 });
 
-        for (var depth = 0; depth < MaxInheritanceDepth; depth++)
-        {
-            if (current?.GetString(field) is { Length: > 0 } value) return value;
-
-            guid = guid is null ? null : _inheritance.BaseOf(guid);
-            if (guid is null) return null;
-
-            current = _definitions.Resolve(guid);
-        }
-
-        return null;
-    }
+    /// <summary>A numeric field from a definition or the nearest ancestor stating it.</summary>
+    private double? InheritedDouble(DefinitionFile? definition, string field) =>
+        BaseChain(definition)
+            .Select(d => d.GetDouble(field))
+            .FirstOrDefault(v => v is not null);
 
     /// <summary>
     /// Cells occupied by a block, resolving its model through the composite graph first.
@@ -136,10 +129,31 @@ public sealed class GameDataExtractor
         return _occupancy.OccupiedCells(blockName, modelGuid);
     }
 
+    /// <summary>
+    /// GUID → config id, for the lookup tables blocks point at.
+    /// </summary>
+    /// <remarks>
+    /// The game references densities and resources by GUID; the config must not (Schema.md R1), so
+    /// the producer resolves them here and every block emits a readable id. Built before the block
+    /// collections, because those depend on it.
+    /// </remarks>
+    private readonly Dictionary<string, string> _idByGuid =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Thrust-class game key (<c>"Ion"</c>) → config id (<c>"ion"</c>).</summary>
+    private readonly Dictionary<string, string> _thrustClassIdByKey =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Ids already handed out, per collection, so a clash cannot pass unnoticed.</summary>
+    private readonly Dictionary<string, HashSet<string>> _idsByKind =
+        new(StringComparer.Ordinal);
+
     public GameData Extract(string toolVersion, string fingerprint)
     {
+        // Order matters: these three populate the id maps that every block below resolves through.
         var densities = ExtractDensities();
         var resources = ExtractResources();
+        var thrustClasses = ExtractThrustClasses();
 
         return new GameData
         {
@@ -159,7 +173,7 @@ public sealed class GameDataExtractor
             Models = ExtractModels(),
             Densities = densities,
             Resources = resources,
-            ThrustClasses = ExtractThrustClasses(),
+            ThrustClasses = thrustClasses,
             Thrusters = ExtractThrusters(),
             Containers = ExtractContainers(),
             Tanks = ExtractTanks(),
@@ -198,11 +212,15 @@ public sealed class GameDataExtractor
     private List<Density> ExtractDensities() =>
         _definitions.OfType(DensityType)
             .Where(d => d.Guid is not null)
-            .Select(d => new Density
+            .Select(d =>
             {
-                Id = d.Guid!,
-                Name = Path.GetFileNameWithoutExtension(d.RelativePath),
-                MassCurveModifier = d.GetDouble("MassCurveModifier") ?? 0,
+                var name = Path.GetFileNameWithoutExtension(d.RelativePath);
+                return new Density
+                {
+                    Id = RegisterId(d.Guid!, name, "density"),
+                    Name = name,
+                    MassCurveModifier = d.GetDouble("MassCurveModifier") ?? 0,
+                };
             })
             .ToList();
 
@@ -211,13 +229,59 @@ public sealed class GameDataExtractor
             .Where(r => r.Guid is not null)
             .Select(r => new Model.Resource
             {
-                Id = r.Guid!,
+                // Slugged from the filename, not from Name: the latter is "ResourceElectricity",
+                // which would give an id of resourceElectricity. Schema.md §4.2 wants "electricity".
+                Id = RegisterId(r.Guid!, Path.GetFileNameWithoutExtension(r.RelativePath), "resource"),
                 Name = r.GetString("Name") ?? Path.GetFileNameWithoutExtension(r.RelativePath),
                 FlowRateUnits = r.GetString("FlowRateUnits") ?? "unknown",
                 StorageUnits = r.GetString("StorageUnits") ?? "unknown",
                 RequiresConveyors = r.GetBoolean("RequiresConveyors") ?? false,
             })
             .ToList();
+
+    /// <summary>
+    /// Maps a definition's GUID to a readable config id, guarding against collisions.
+    /// </summary>
+    /// <remarks>
+    /// A collision would be quietly destructive — two densities sharing an id means every block
+    /// pointing at one of them silently gets the other's mass curve — so it falls back to the GUID
+    /// and warns. Ugly in the file, but correct, and visible.
+    /// <para>
+    /// Uniqueness is per <paramref name="kind"/>, not global: densities and resources are separate
+    /// collections in the config, so a density and a resource sharing a slug is not a conflict and
+    /// must not be reported as one.
+    /// </para>
+    /// </remarks>
+    private string RegisterId(string guid, string name, string kind)
+    {
+        var taken = _idsByKind.TryGetValue(kind, out var existing)
+            ? existing
+            : _idsByKind[kind] = new HashSet<string>(StringComparer.Ordinal);
+
+        var slug = BlockNaming.SlugOf(name);
+
+        if (slug.Length == 0 || !taken.Add(slug))
+        {
+            Warn("ambiguousId",
+                $"{kind} '{name}' does not yield a unique readable id; falling back to its GUID.",
+                null);
+            slug = guid;
+        }
+
+        _idByGuid[guid] = slug;
+        return slug;
+    }
+
+    /// <summary>
+    /// Resolves a GUID reference to the config id of the thing it points at.
+    /// </summary>
+    /// <remarks>
+    /// A GUID that resolves to nothing is left as-is rather than dropped: the consumer then fails to
+    /// look it up and reports "mass unknown", which is the honest outcome. Substituting a default
+    /// here is what produced 8-tonne thrusters weighing 5 kg (see <c>ThrusterSizer.BlockMassKg</c>).
+    /// </remarks>
+    private string? ResolveId(string? guid) =>
+        guid is not null && _idByGuid.TryGetValue(guid, out var id) ? id : guid;
 
     private List<Model.ThrustClass> ExtractThrustClasses()
     {
@@ -239,9 +303,13 @@ public sealed class GameDataExtractor
                 continue;
             }
 
+            var gameKey = key.GetString() ?? "unknown";
+            var id = BlockNaming.SlugOf(gameKey);
+            _thrustClassIdByKey[gameKey] = id;
+
             classes.Add(new Model.ThrustClass
             {
-                Id = key.GetString() ?? "unknown",
+                Id = id,
                 MaxThrustAirDensity = Number(value, "MaxThrustAirDensity") ?? 0,
                 MinThrustAirDensity = Number(value, "MinThrustAirDensity") ?? -1,
                 WaterSubmersionTolerance = Number(value, "WaterSubmersionTolerance") ?? 1,
@@ -306,11 +374,11 @@ public sealed class GameDataExtractor
             {
                 Id = BlockNaming.IdOf(blockName),
                 Name = BlockNaming.DisplayNameOf(blockName),
-                ThrustClass = thrustClass,
+                ThrustClass = ResolveThrustClassId(thrustClass),
                 SizeCm = BlockNaming.SizeCmOf(blockName) ?? 0,
                 ThrustNewtons = definition.GetDouble("ThrustPower"),
-                ConsumedResource = ReadConsumedResource(definition, block),
-                Density = density,
+                ConsumedResource = ReadConsumedResource(definition, block, blockName),
+                Density = ResolveId(density),
                 OccupiedCells = cells,
                 Implemented = true,
                 ProvenanceOverrides = provenance,
@@ -353,18 +421,71 @@ public sealed class GameDataExtractor
         return null;
     }
 
-    private ConsumedResource? ReadConsumedResource(DefinitionFile thruster, DefinitionFile? block)
+    /// <summary>
+    /// What a thruster burns, and how fast.
+    /// </summary>
+    /// <remarks>
+    /// The rate sits on the thruster definition; the resource <em>identity</em> sits on the block
+    /// definition's <c>ConsumedResource.Type</c> — and is almost always inherited, so this walks
+    /// <c>BaseGuid</c> like every other field (§7.2.2). Reading only the block's own file resolved
+    /// just 4 of 12 thrusters, silently, leaving both hydrogen and most of the atmospheric family
+    /// with no fuel figure at all.
+    /// <para>
+    /// The catch that makes this more than a one-line walk: a child <b>restates</b>
+    /// <c>ConsumedResource</c> carrying only <c>Amount</c>, so the object is present while the
+    /// <c>Type</c> inside it is not. The merge therefore has to happen on the inner field — a
+    /// field-level "is it present? then stop" walk still finds nothing.
+    /// </para>
+    /// </remarks>
+    private ConsumedResource? ReadConsumedResource(
+        DefinitionFile thruster, DefinitionFile? block, string blockName)
     {
-        var rate = thruster.GetDouble("ResourcesRequiredToThrust");
-        if (rate is null) return null;
+        var rate = InheritedDouble(thruster, "ResourcesRequiredToThrust");
+        var resource = InheritedConsumedResourceType(block);
 
-        var resource = block?.GetElement("ConsumedResource") is { ValueKind: JsonValueKind.Object } c
-                       && c.TryGetProperty("Type", out var type)
-                       && type.ValueKind == JsonValueKind.String
-            ? type.GetString()
-            : null;
+        if (rate is null || resource is null)
+        {
+            Warn("unresolvedConsumedResource",
+                $"{blockName}: {(rate is null ? "no consumption rate" : "no resource type")} "
+                + "found on the block or anywhere in its inheritance chain, so its fuel or power "
+                + "draw cannot be reported.", thruster.RelativePath);
 
-        return resource is null ? null : new ConsumedResource { Resource = resource, RatePerThrust = rate.Value };
+            return null;
+        }
+
+        return new ConsumedResource
+        {
+            Resource = ResolveId(resource) ?? resource,
+            RatePerThrust = rate.Value,
+        };
+    }
+
+    /// <summary>
+    /// A thrust class's config id, from the game key the block states.
+    /// </summary>
+    /// <remarks>
+    /// An unmapped key is passed through rather than nulled, so a class the configuration file does
+    /// not declare shows up as a dangling reference the consumer reports, not as a thruster that
+    /// silently loses its environmental falloff.
+    /// </remarks>
+    private string? ResolveThrustClassId(string? gameKey) =>
+        gameKey is not null && _thrustClassIdByKey.TryGetValue(gameKey, out var id) ? id : gameKey;
+
+    /// <summary>The nearest <c>ConsumedResource.Type</c> in a block's inheritance chain.</summary>
+    private string? InheritedConsumedResourceType(DefinitionFile? block)
+    {
+        foreach (var link in BaseChain(block))
+        {
+            if (link.GetElement("ConsumedResource") is { ValueKind: JsonValueKind.Object } consumed
+                && consumed.TryGetProperty("Type", out var type)
+                && type.ValueKind == JsonValueKind.String
+                && type.GetString() is { Length: > 0 } guid)
+            {
+                return guid;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -413,7 +534,7 @@ public sealed class GameDataExtractor
                 Id = BlockNaming.IdOf(blockName),
                 Name = BlockNaming.DisplayNameOf(blockName),
                 MaxMassKg = capacity,
-                Density = ResolveDensity(anchor, block, blockName),
+                Density = ResolveId(ResolveDensity(anchor, block, blockName)),
                 OccupiedCells = cells,
                 ProvenanceOverrides = new Dictionary<string, Provenance>(StringComparer.Ordinal)
                 {
@@ -455,10 +576,10 @@ public sealed class GameDataExtractor
             {
                 Id = BlockNaming.IdOf(blockName),
                 Name = BlockNaming.DisplayNameOf(blockName),
-                Resource = resource,
+                Resource = ResolveId(resource),
                 MaxCapacity = group.Max(d => d.GetDouble("MaxCapacity") ?? 0),
                 MaxDischargeRate = anchor.GetDouble("MaxDischargeRate"),
-                Density = ResolveDensity(anchor, block, blockName),
+                Density = ResolveId(ResolveDensity(anchor, block, blockName)),
                 OccupiedCells = cells,
                 ProvenanceOverrides = new Dictionary<string, Provenance>(StringComparer.Ordinal)
                 {

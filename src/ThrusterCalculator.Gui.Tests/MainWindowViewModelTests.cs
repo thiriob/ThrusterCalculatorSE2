@@ -89,6 +89,25 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public void EveryFeasibleLoadoutReportsItsDrawWithUnits()
+    {
+        // The producer used to lose ConsumedResource for any thruster that inherited it, which was
+        // most of them, so this column was blank for 8 of 12 real thrusters with no warning
+        // anywhere. Asserting on every feasible row is what makes that visible here.
+        var vm = Create();
+
+        var feasible = vm.Results.Where(r => r.IsFeasible).ToList();
+
+        Assert.NotEmpty(feasible);
+        Assert.All(feasible, r => Assert.NotEqual(string.Empty, r.DrawText));
+
+        // Units matter: electricity is kW and hydrogen is L/s, and the bare numbers differ by
+        // orders of magnitude, so an unlabelled column reads as a false efficiency comparison.
+        Assert.Contains(feasible, r => r.DrawText.EndsWith("kW", StringComparison.Ordinal));
+        Assert.Contains(feasible, r => r.DrawText.EndsWith("L/s", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void UnimplementedBlocksAreShownRatherThanHidden()
     {
         // During alpha "does this exist yet?" is a real question.

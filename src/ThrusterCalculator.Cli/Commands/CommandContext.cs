@@ -1,3 +1,4 @@
+using ThrusterCalculator.Engine;
 using ThrusterCalculator.Extraction;
 
 namespace ThrusterCalculator.Cli.Commands;
@@ -56,5 +57,55 @@ internal static class CommandContext
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Prefers the game's own precomputed occupancy and inheritance, falling back to the table.
+    /// </summary>
+    /// <remarks>
+    /// Hosting the game's assemblies is the fragile part of this tool, so a failure here degrades
+    /// rather than aborting: the table covers fewer blocks and inheritance goes unresolved, but the
+    /// run still produces a usable config (Design.md P5). <c>--no-engine</c> forces that path, which
+    /// is also how the two occupancy sources get compared.
+    /// <para>
+    /// Shared by <c>extract</c> and <c>verify</c> deliberately — verify must exercise the same
+    /// resolution the real run does, or it is checking something other than what ships.
+    /// </para>
+    /// </remarks>
+    public static (IOccupancySource Occupancy, IDefinitionInheritance Inheritance)
+        OpenEngineSources(Se2Installation installation, bool noEngine)
+    {
+        ArgumentNullException.ThrowIfNull(installation);
+
+        var table = new TableOccupancySource();
+
+        if (noEngine)
+        {
+            Console.Error.WriteLine("Engine disabled (--no-engine).");
+            return (table, new NoDefinitionInheritance());
+        }
+
+        try
+        {
+            var occupancy = ContentCacheOccupancySource.Open(
+                installation.RootPath, installation.ContentPath, table);
+            Console.Error.WriteLine($"Content cache:  {occupancy.Coverage:N0} asset entries.");
+
+            // Both live behind the same runtime, so one attach serves both.
+            var inheritance = DefinitionSetInheritance.Open(
+                Se2Runtime.Attach(installation.RootPath), installation.ContentPath);
+            Console.Error.WriteLine(
+                $"Definition sets: {inheritance.Count:N0} of {inheritance.TotalDefinitions:N0} "
+                + "definitions declare a base.");
+
+            return (occupancy, inheritance);
+        }
+        catch (Exception ex) when (ex is Se2EngineException or BadImageFormatException
+                                      or FileLoadException or TypeLoadException)
+        {
+            Console.Error.WriteLine($"Could not host the game's assemblies ({ex.Message}).");
+            Console.Error.WriteLine("Falling back to the recovered table; inheritance unresolved.");
+            return (table, new NoDefinitionInheritance());
+        }
     }
 }
