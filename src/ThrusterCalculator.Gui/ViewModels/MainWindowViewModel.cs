@@ -9,6 +9,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ThrusterCalculator.Core;
 using ThrusterCalculator.Core.Sizing;
+using ThrusterCalculator.Gui.Controls;
 using ThrusterCalculator.Gui.Services;
 using ThrusterCalculator.Model;
 
@@ -381,6 +382,55 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// most useful thing the panel says — it just does not need eight rows to say it.
     /// </remarks>
     public string UnusableSummary => SingleType.UnusableSummary;
+
+    // ── climb profile: MOCKUP, v3 (Roadmap) ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// A hand-drawn climb curve, so the layout can be judged before the maths exists.
+    /// </summary>
+    /// <remarks>
+    /// <b>Every number here is invented.</b> Nothing computes it and nothing checks it — the shape
+    /// is drawn to be plausible, not correct, and it does not respond to the loadout, the planet or
+    /// the ship's mass.
+    /// <para>
+    /// It cannot become real until two things land: the gravity falloff extracted from
+    /// <c>GravityGenerator</c> (<c>FallOffPower</c>, <c>AccelerationDistance</c> — present in the
+    /// data, unextracted), and B6, the verification that both ramps are actually linear. A smooth
+    /// line is a confident-looking artefact; drawing an unchecked interpolation as one is exactly
+    /// the failure this project keeps catching in itself.
+    /// </para>
+    /// <para>
+    /// The shape chosen is the instructive one: a ship that lifts off comfortably and then stalls
+    /// inside the atmosphere, because that is the failure altitude exists to catch.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<ClimbSample> ClimbSamples { get; } = BuildMockClimb();
+
+    public IReadOnlyList<string> ClimbBands { get; } =
+        ["Space", "Atmosphere edge", "Ground"];
+
+    public string ClimbCaption =>
+        "Placeholder — invented numbers, fixed shape. Real curve needs the gravity falloff "
+        + "extracted and the ramp shapes verified in game.";
+
+    private static IReadOnlyList<ClimbSample> BuildMockClimb()
+    {
+        // Rises briefly as gravity falls, then collapses as the air thins and the atmospheric
+        // thrusters lose their bite — crossing 1.0 well before space.
+        var samples = new List<ClimbSample>();
+
+        for (var i = 0; i <= 40; i++)
+        {
+            var altitude = i / 40.0;
+
+            var gravityRelief = 1 + (0.45 * altitude);
+            var airLoss = 1 / (1 + Math.Exp((altitude - 0.45) * 11));
+
+            samples.Add(new ClimbSample(altitude, 0.12 + (1.55 * gravityRelief * airLoss)));
+        }
+
+        return samples;
+    }
 
     // ── configurator ──────────────────────────────────────────────────────────────────────────
 

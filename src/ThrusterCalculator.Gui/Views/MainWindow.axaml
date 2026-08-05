@@ -411,6 +411,28 @@
                 <!-- The running total, pinned below the list so it never scrolls out of sight —
                      it is the thing you are steering by. -->
                 <StackPanel DockPanel.Dock="Bottom">
+
+                    <!-- MOCKUP (Roadmap v3). Fixed invented data; does not react to anything. -->
+                    <Border Classes="card" Margin="0,8,0,0">
+                        <StackPanel>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Classes="h boxed" Text="CLIMB PROFILE" />
+                                <Border Grid.Column="1" Background="#7A5200" CornerRadius="3"
+                                        Padding="6,1" Margin="0,0,0,6" VerticalAlignment="Top">
+                                    <TextBlock Text="MOCKUP" FontSize="10" Foreground="White" />
+                                </Border>
+                            </Grid>
+
+                            <c:ClimbProfileChart Height="230"
+                                                 Samples="{Binding ClimbSamples}"
+                                                 BandLabels="{Binding ClimbBands}"
+                                                 TargetRatio="{Binding TargetThrustToWeight}" />
+
+                            <TextBlock Classes="dim" TextWrapping="Wrap" Margin="0,6,0,0"
+                                       Text="{Binding ClimbCaption}" />
+                        </StackPanel>
+                    </Border>
+
                     <Border Classes="card" Margin="0,8,0,0">
                         <StackPanel Spacing="6">
                             <ProgressBar Minimum="0" Maximum="1" Height="6"
