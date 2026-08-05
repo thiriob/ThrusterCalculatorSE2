@@ -519,6 +519,33 @@ fail — not merely to pass — against a committed `gamedata.json` and a stray 
 GitLab's Windows build is opt-in (`RUN_WINDOWS_BUILD`), because shared Windows runners are not
 available on every gitlab.com plan and a job that can never be scheduled would fail every pipeline.
 
+### 7.1.3 Branches, and what publishes
+
+| Branch | What happens |
+|---|---|
+| **`dev`** | Work lands here. CI tests and build-checks it |
+| **`main`** | What ships. Merging builds the release |
+
+**The version is `<Version>` in `src/Directory.Build.props`, and it is the only switch.** Pushing to
+`main` reads it, and publishes only if no release of that version exists yet — so merging to `main`
+is safe and repeatable, while *shipping* stays the deliberate act of bumping one line. A re-run with
+no bump is a notice, not a failure.
+
+That same property stamps the assemblies, so `generator.version` in a `gamedata.json` traces back to
+the build that produced it.
+
+Two artifacts ship, both portable zips, neither containing game data (§3.4):
+
+| | Size | Needs |
+|---|---|---|
+| self-contained | ~200 MB | nothing |
+| runtime-dependent | ~30 MB | .NET 9 **Desktop** runtime — `tc.exe` carries WPF and WinForms |
+
+**Debug symbols are embedded, not shipped** (`DebugType=embedded`). Loose `.pdb` files were most of
+the download — `libSkiaSharp.pdb` alone is 80 MB — and packaging deletes every one. Ours live inside
+the assemblies instead, because a user's install is the one thing that cannot be reproduced here, so
+a pasted stack trace with line numbers is worth ~100 KB.
+
 ### 7.2 Tolerant parsing is a hard requirement
 
 Alpha game, 17 172 files, schemas stamped from a dozen builds in one install (Research §2.3):

@@ -28,6 +28,36 @@
     <AvaloniaVersion>12.1.1</AvaloniaVersion>
   </PropertyGroup>
 
+  <!--
+    The single source of the release version.
+
+    Bumping this is what publishes: pushing to main builds a release named after it, and skips if
+    one already exists. So merging work to main is safe and repeatable, while *shipping* stays a
+    deliberate one-line act rather than a side effect of merging.
+
+    It also stamps the assemblies, which is what `tc` writes into gamedata.json's generator.version
+    — so a config can be traced back to the build that produced it.
+  -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!--
+    Symbols go inside the assemblies rather than into .pdb files beside them.
+
+    A release folder with no loose .pdb is cleaner, and anyone actually debugging will build from
+    source. But symbols are still worth having: the one thing that cannot be reproduced here is a
+    user's own install and game build, so a pasted stack trace is the main diagnostic channel — and
+    without symbols it names methods but not lines. Embedding costs ~100 KB across all assemblies
+    and removes the choice.
+
+    Third-party native symbols are a different matter and are dropped at packaging time:
+    libSkiaSharp.pdb alone is 80 MB, and nobody here is debugging Skia.
+  -->
+  <PropertyGroup>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
   <PropertyGroup>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>

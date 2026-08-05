@@ -1,0 +1,173 @@
+name: Release
+
+# main is what ships. Work lands on dev, which ci.yml checks; merging to main builds the release.
+#
+# The version comes from <Version> in src/Directory.Build.props, and a release is only created if
+# that version has no release yet — so merging to main as often as you like is safe, and *shipping*
+# is the deliberate act of bumping one line.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: "true"
+  RUNTIME: win-x64
+
+jobs:
+  version:
+    name: Read version
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.read.outputs.value }}
+      tag: v${{ steps.read.outputs.value }}
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read version
+        id: read
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/Directory.Build.props | head -1)
+          if [ -z "$version" ]; then
+            echo "No <Version> found in src/Directory.Build.props" >&2
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "Version is $version"
+
+      # Re-running main without a bump must not fail the pipeline — it just has nothing to publish.
+      - name: Has this version shipped?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.read.outputs.value }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::v${{ steps.read.outputs.value }} is already released. Bump <Version> to ship again."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  package:
+    name: ${{ matrix.label }}
+    needs: version
+    if: needs.version.outputs.exists == 'false'
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The default download: no prerequisites, at the cost of ~300 MB. Trivial next to the
+          # game itself, and "install a runtime first" loses people.
+          - self-contained: "true"
+            suffix: ""
+            label: Portable, self-contained
+
+          # For anyone who already has the runtime. Needs the DESKTOP runtime, not just the base
+          # one: tc.exe hosts the game's assemblies and therefore carries WPF and WinForms.
+          - self-contained: "false"
+            suffix: "-requires-dotnet9"
+            label: Portable, runtime-dependent
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "9.0.x"
+
+      # Both apps publish into ONE folder: the GUI spawns tc.exe from beside itself, so they have
+      # to ship together.
+      #
+      # Order matters. Cli last: it carries the WindowsDesktop runtime (WPF + WinForms) that the
+      # engine needs to host the game's assemblies, and that set is a superset of the GUI's.
+      - name: Publish GUI
+        run: >
+          dotnet publish src/ThrusterCalculator.Gui
+          -c Release -r ${{ env.RUNTIME }} --self-contained ${{ matrix.self-contained }}
+          -o publish
+
+      - name: Publish CLI
+        run: >
+          dotnet publish src/ThrusterCalculator.Cli
+          -c Release -r ${{ env.RUNTIME }} --self-contained ${{ matrix.self-contained }}
+          -o publish
+
+      # The release must contain no Space Engineers data — see License.md. There is no gamedata.json
+      # in a release by design: the user generates their own with the bundled tc.exe, which is both
+      # the honest position and the only one that cannot ship stale numbers.
+      - name: Refuse to ship game data
+        shell: bash
+        run: |
+          found=$(find publish -name 'gamedata.json' -o -name '*.def' -o -name '*.vrb')
+          if [ -n "$found" ]; then
+            echo "Game data found in the publish output:" >&2
+            echo "$found" >&2
+            exit 1
+          fi
+          echo "Publish output contains no game data."
+
+      # Both binaries must at least start. A self-contained publish trims the runtime to what the
+      # projects declare, and a missing framework shows up here rather than in a user's hands —
+      # this is what caught Engine needing UseWindowsForms as well as UseWPF.
+      - name: Smoke-test the CLI
+        run: |
+          ./publish/tc.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "tc.exe failed to run" }
+
+      # No .pdb belongs in a release folder. Ours are embedded in the assemblies instead
+      # (DebugType=embedded in Directory.Build.props), so a user's stack trace still carries line
+      # numbers; these are third-party native symbols, and libSkiaSharp.pdb alone is 80 MB.
+      #
+      # They were most of the download: 130 MB became 30 for the runtime-dependent build, and
+      # 299 became 199 self-contained.
+      - name: Drop debug symbols
+        shell: pwsh
+        run: |
+          Remove-Item publish/*.pdb -ErrorAction SilentlyContinue
+          "{0:N0} MB" -f ((Get-ChildItem publish -Recurse | Measure-Object Length -Sum).Sum / 1MB)
+
+      - name: Zip
+        shell: pwsh
+        run: |
+          $name = "ThrusterCalculatorSE2-v${{ needs.version.outputs.value }}-${{ env.RUNTIME }}${{ matrix.suffix }}"
+          Compress-Archive -Path publish/* -DestinationPath "$name.zip"
+          "ARCHIVE=$name.zip" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: portable-${{ env.RUNTIME }}${{ matrix.suffix }}
+          path: ${{ env.ARCHIVE }}
+
+  # Separate from the matrix on purpose: two parallel jobs calling `gh release create` for the same
+  # tag would race, and one would fail on an already-existing release. This collects both zips and
+  # publishes once.
+  release:
+    name: Publish release
+    needs: [version, package]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # Tags the commit as it publishes, so the release tab and the history agree on what shipped.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" artifacts/*.zip \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes \
+            --notes-file .github/release-notes.md
