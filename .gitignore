@@ -9,7 +9,7 @@
 # "gamedata.json" so these rules cannot swallow it.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Extracted config — a build output, produced by `th extract`
+# Extracted config — a build output, produced by `tc extract`
 gamedata.json
 **/gamedata.json
 data/

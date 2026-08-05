@@ -121,13 +121,14 @@ asking the producer.
 `Extraction` does install discovery (`libraryfolders.vdf`, app `1133870`, Research §6), walks
 `Content\`, builds the GUID index, resolves the graph, and emits `Model` objects.
 
-`Engine` is the quarantined piece (§10.2.0): it hosts SE2's own assemblies to read block occupancy
-out of `contentcache.vrb`. Copied from `../BlueprintHelperSE2`, whose comments carry the hard-won
+`Engine` is the quarantined piece (§10.2.0): it hosts SE2's own assemblies to read two things out of
+`.vrb` — block occupancy from `contentcache.vrb`, and the `BaseGuid` inheritance graph from
+`definitionsets.vrb` (§7.2.2). Copied from `../BlueprintHelperSE2`, whose comments carry the hard-won
 details — which assemblies must *not* be loaded, and why the allocator is thread-local.
 
-**`Extraction` never references it.** They meet at `IOccupancySource`, so a failure to host the game
-degrades to the built-in table instead of failing the run, and extraction stays testable with no
-game present.
+**`Extraction` never references it.** They meet at `IOccupancySource` and `IDefinitionInheritance`,
+so a failure to host the game degrades to the built-in table and to no inheritance instead of
+failing the run, and extraction stays testable with no game present.
 
 `Cli` (`tc.exe`) is the producer host and the only thing that needs to exist for a rebuild.
 
@@ -264,7 +265,7 @@ inevitable**: the GUI couldn't reference the engine even if it wanted to. The Re
 
 ```xml
 <TcTargetFramework>net9.0</TcTargetFramework>
-<TcWindowsTargetFramework>net9.0-windows</TcWindowsTargetFramework>   <!-- reserved, unused -->
+<TcWindowsTargetFramework>net9.0-windows</TcWindowsTargetFramework>   <!-- Engine and Cli only -->
 <AvaloniaVersion>12.1.1</AvaloniaVersion>
 ```
 
@@ -272,10 +273,11 @@ net9 (not net10, though the SDK is installed) because `SpaceEngineers2.runtimeco
 `"tfm": "net9.0"` with `Microsoft.NETCore.App 9.0.0` and `Microsoft.WindowsDesktop.App 9.0.0`.
 Matching the runtime the game was built against removes a variable.
 
-Strictly, that reasoning now binds only a hypothetical `Engine` — nothing else loads game assemblies
-(§2). It's kept project-wide for a single flip point and to match the sibling repo. **`Model` and
-`Core` must stay platform-neutral regardless** — that's what keeps the web target open (§9). Don't
-let a Windows dependency drift into them.
+That reasoning binds `Engine`, which actually loads those assemblies (§10.2.0), and `Cli`, which
+references it. It's kept project-wide for a single flip point and to match the sibling repo.
+**`Model` and `Core` must stay platform-neutral regardless** — that's what keeps the web target open
+(§9). Don't let a Windows dependency drift into them, or into `Extraction`, which is what keeps
+extraction testable with no game present.
 
 ---
 
@@ -364,14 +366,20 @@ Match the engine's edge cases exactly, and unit-test them:
 Provenance is `Derived`: our formula, over `Measured` inputs (`MassCurveModifier` and `MinBlockMass`
 from `.def`) plus a recovered `occupiedCells` (§5.5).
 
-### 5.5 The `V` table
+### 5.5 Where `V` comes from
 
 `V` (occupied 25 cm cells) is voxelized from physics colliders and cached in binary
-`contentcache.vrb` — not in any `.def` (Research §4.0.1). Rather than decode that, **store `V` per
-block in `gamedata.json`** as a small integer table.
+`contentcache.vrb` — not in any `.def` (Research §4.0.1). It is stored per block in `gamedata.json`
+as a plain integer, so the consumer never touches the cache.
 
-All twelve thruster values were recovered exactly by solving the formula against known in-game masses
-(Research §4.0). The same trick extends to containers and tanks.
+**Producing it went through two stages, and both still matter.** Twelve thruster values were first
+recovered by solving the formula against known in-game masses (Research §4.0); the content cache was
+then read directly and agreed exactly (§10.2.0), which is what confirmed both the formula and the
+recovered values. Today the cache is the source (1,454 blocks) and `OccupiedCellsTable` is the
+fallback and cross-check (16 blocks, forced with `--no-engine`).
+
+Keep both. The disagreement between them is what caught the bounding-box-versus-`CellGroups` bug —
+a silent 10% mass overstatement on the 5 m tank (Backlog B13).
 
 Why this is stable rather than a hack:
 
@@ -423,9 +431,17 @@ not a rewrite (Design §3.3).
 - `Core.Tests` — the math (§5). Pure functions, fast. Where correctness lives.
 - `Extraction.Tests` — parsing, against **synthetic fixtures** (§7.1).
 - All three green on a clean clone with no SE2 installed.
-- `tc verify` — on-demand invariant checks against a real local install (≥1 thruster per known
-  family, all thrust > 0, every referenced GUID resolves). The canary for "the game patched and broke
-  our assumptions," available without committing Keen's files.
+- `tc verify` — on-demand invariant checks against a real local install. The canary for "the game
+  patched and broke our assumptions," available without committing Keen's files. It checks **two
+  levels**, and the second is the one that earns its keep:
+  - *the raw definitions* — thrusters found, all thrust > 0, every thruster pairs with its block;
+  - *the extracted config* — every thruster resolves its consumed resource, density and cell count;
+    every tank resolves its resource; every reference lands in the table it names; no GUID leaks.
+
+  The split matters because **an inherited field is present in the raw data and absent from the
+  config when resolution breaks**, so only a check on the output can see it. That is not
+  hypothetical: `ConsumedResource.Type` is inherited by most thrusters, was read without walking the
+  base chain, and silently vanished for 8 of 12 — no exception, no warning, just an empty column.
 
 ### 7.1 Fixtures: synthetic and committed, real data never
 
@@ -499,7 +515,7 @@ confident wrong config. So the artifact records **counts per `$Type`**, and the 
 
 A block's data is split across files that do not reference each other. The join is its
 `EntityCompositeDefinition`, which lists the component definitions forming the entity
-(Research.md §3.3) — the engine's own mechanism, not a guess about folder layout.
+(Research.md §3.5) — the engine's own mechanism, not a guess about folder layout.
 
 `BlockCompositionIndex.FindSibling` implements it, and `tc verify` asserts every thruster still
 pairs, so a restructuring by Keen fails loudly instead of the app quietly losing every thruster's
@@ -512,23 +528,38 @@ folder. A miss returns `null` and becomes a recorded warning. An earlier draft o
 proposed same-directory matching as the primary method; the composite graph is strictly better and
 supersedes it.
 
-### 7.2.2 Template inheritance
+### 7.2.2 Template inheritance — read the parent pointer, never infer it
 
 Concrete blocks routinely omit fields and inherit them from base definitions under `Templates/`.
-This is not an edge case: hydrogen thrusters inherit `ThrustClass`, and **seven of twelve thrusters
-inherit `Density`** — without resolving it, their mass cannot be computed at all.
+This is not an edge case: hydrogen thrusters inherit `ThrustClass`, **seven of twelve thrusters
+inherit `Density`**, no cargo container declares one at all, and most planets inherit their
+atmosphere geometry. Without resolving inheritance, none of those values exist.
 
-Templates are matched by **component-slot signature**: a template's slots are a subset of those of
-every block built from it. `BlockCompositionIndex.InheritedString` resolves with **most specific
-wins** (the matching template with the most slots), requiring unanimity within that tier.
+**The parent pointer is `BaseGuid`, and it is not in the `.def` files** — it lives in
+`definitionsets.vrb` under `DefinitionLoadingData` (Research §4.4.1). 9,142 of 17,196 definitions
+declare one. `Engine.DefinitionSetInheritance` reads it; `Extraction` consumes it through
+`IDefinitionInheritance`, so a run without the engine degrades to no inheritance rather than to a
+guess. Resolution is then trivial: read the field, and if absent follow `BaseGuid` and repeat
+(`GameDataExtractor.InheritedString` / `BaseChain`, capped at 16 links against a cycle).
 
-Two simpler rules were tried against real data and failed, which is why the rule is what it is:
+#### The two rules that came before it, and why they are gone
+
+Both **inferred** the parent from component-slot signatures, because the real pointer had not been
+found yet. Both are deleted. `BlockComposition.SlotSignature` survives as a descriptive field only.
 
 | Rule | Result |
 |---|---|
 | Exact slot-set equality | Missed blocks carrying extra components — the 5 m and 10 m atmospheric thrusters silently lost their density |
 | All subset matches as equals | Too many templates matched and disagreed; unanimity then resolved *nothing* (7 densities and 4 classes lost) |
-| **Most specific wins** | All 12 thrusters resolve; every computed mass matches the game |
+| Slot containment, most specific wins | Thrusters and tanks resolved; containers unresolved and warned |
+| Overlap ≥ 75%, best match wins | Containers resolved — **to the wrong template**. Tanks silently became Mostly Solid (20) instead of Mostly Hollow (11), breaking three masses that had matched exactly, **with zero warnings** |
+
+The last row is the one to remember: the only case in this project where a heuristic produced
+confident wrong numbers *and* suppressed the warning that would have exposed them, because the
+matcher believed it had succeeded. It was caught only by re-running the known-mass regression.
+
+**Rule for anything similar: if the engine has an explicit pointer, find it. A shape-based guess
+that "mostly works" is worse than no answer, because no answer warns.**
 
 ### 7.3 Shallow delta decoding
 
@@ -649,24 +680,32 @@ Two things worth recording from building it:
   1–2 cells, all on the largest blocks, where a mass published to the whole kilogram cannot resolve
   individual cells.
 
-### 10.2.1 RESOLVED — we transcribe, and engine hosting is not needed
+### 10.2.1 RESOLVED for the *formula* — superseded for the *project*
+
+> **Read §10.2.0 first.** Its conclusion about the mass formula stands unchanged and is why `Core`
+> has no game dependency. Its conclusion that `Engine` need not exist is **obsolete** — the project
+> hosts the engine today, for occupancy and inheritance rather than for mass.
 
 The spike is done (Research §4.0). `ComputeMassAndHP()` was decompiled, the formula is three lines,
-and all twelve thruster `V` values were recovered as exact integers. **Transcribe wins outright** —
-the comparison below is kept for the record, but the decision is made.
+and all twelve thruster `V` values were recovered as exact integers. **Transcribe wins outright** for
+the mass curve — the comparison in §10.3 is kept for the record, but that decision is made and has
+not changed.
 
-`Engine` is therefore **not created**. v1 ships with **zero game-assembly dependency**: the producer
-reads JSON, the consumer reads JSON, and the one piece of engine behaviour we need is 3 lines of
-arithmetic in `Core` (§5.4) plus a 20-entry integer table (§5.5).
+What *did* change is that two later findings needed the engine anyway:
 
-That also means the producer is far lighter than planned — plain `System.Text.Json` file walking, no
-assembly loading, no `UseWPF`, no out-of-process bootstrap. The §4 constraint about Avalonia
-collisions still holds in principle but is now **moot in practice**, since nothing loads SE2's
-assemblies at all.
+| Finding | What it buys | Where |
+|---|---|---|
+| `contentcache.vrb` holds precomputed occupancy | `V` for 1,454 blocks instead of a 16-entry hand table | §10.2.0 |
+| `definitionsets.vrb` holds `BaseGuid` | The real parent pointer, replacing two failed shape heuristics | §7.2.2 |
 
-Engine hosting stays documented as the escalation path for two later features that genuinely need it:
-`VRage.Voxels.SurfaceGravity` (planet gravity magnitude, Research §5.3) and `.vrb` blueprint decoding
-(Check mode). Neither is in v1.
+So `Engine` **is created** and `Cli` targets `net9.0-windows`. The consumer half is untouched: the
+producer needs a game install (it always did), and `Model`, `Core` and `Gui` still need nothing but
+JSON. The §4 rule that game assemblies never enter the Avalonia process still holds — the CLI is not
+an Avalonia app, and the GUI reaches it by spawning a process, never by reference.
+
+Still-open escalation path for later features: `VRage.Voxels.SurfaceGravity` (planet gravity
+magnitude, Research §5.3) and `.vrb` blueprint decoding (Check mode, Backlog B9). Neither is in v1,
+but both are now much cheaper — the hosting stack they need already exists.
 
 ### 10.3 The comparison that led there
 
@@ -700,8 +739,11 @@ stop depending on how thorough a manual grep happened to be. It earned its keep 
 ## 11. Settled decisions
 
 - **CLI name is `tc`** (`AssemblyName`, so the binary is `tc.exe`) — no conflict on the dev machine.
-- **Every project targets plain `net9.0`** (§2). No Windows TFM anywhere, because nothing loads SE2's
-  assemblies.
+- **`Engine` and `Cli` target `net9.0-windows`; everything else targets plain `net9.0`** (§2). Only
+  `Engine` loads SE2's assemblies, and `Cli` inherits the TFM by referencing it. `Extraction` meets
+  `Engine` at `IOccupancySource` / `IDefinitionInheritance` and never references it.
+- **Inheritance comes from `BaseGuid`, never from a shape heuristic** (§7.2.2). Two slot-signature
+  rules were tried and deleted; one of them produced confident wrong masses with no warning.
 - **Avalonia 12.1.1**, with `AvaloniaUI.DiagnosticsSupport` 2.2.3 for dev tools — the old
   `Avalonia.Diagnostics` package stops at 11.x and does not exist for Avalonia 12.
 - **Producer/consumer split** with `gamedata.json` as the contract (§1). The consumer needs nothing
@@ -723,11 +765,14 @@ stop depending on how thorough a manual grep happened to be. It earned its keep 
 
 ## 12. Open technical questions
 
-1. ~~Mass formula shape~~ — **resolved** (§10.2.1, Research §4.0). No blockers remain.
-2. **Schema design details** (§3) — worth sketching the actual JSON before writing `Model`, since it
-   is the contract both sides bind to and the synthetic fixture must mirror it. Now the next task.
-3. **Recover `V` for cargo containers and tanks** the same way thruster values were recovered
-   (§5.5) — needs their in-game masses. Mechanical, not a research question.
-3. **Web hosting specifics** — deferred entirely, but §3.5 option 2 (binary fetches config from the
+1. ~~Mass formula shape~~ — **resolved** (§10.2.1, Research §4.0).
+2. ~~Schema design details~~ — **resolved**; the contract is [Schema.md](Schema.md) and `Model`
+   implements it.
+3. ~~Recover `V` for cargo containers and tanks~~ — **resolved**, and better than planned: the
+   content cache supplies it for every block rather than a handful solved by hand (§10.2.0).
+4. **Web hosting specifics** — deferred entirely, but §3.5 option 2 (binary fetches config from the
    same host on first run) becomes attractive the moment a host exists. Don't design for it yet;
    don't foreclose it either.
+
+Everything else that is knowingly unfinished lives in [Backlog.md](Backlog.md), which is the single
+list to read before starting work.

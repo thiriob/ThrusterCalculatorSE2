@@ -103,8 +103,22 @@ containment is the whole point of R3.
 
 ## 4. Entity collections
 
-Every entity has a stable `id` (producer-generated, derived from the block name — *not* a game GUID,
-per R1) and a `name` for display.
+Every entity has a stable `id` (producer-generated — *not* a game GUID, per R1) and a `name` for
+display.
+
+Ids are derived, never copied from the graph:
+
+| Collection | Id derived from | Example |
+|---|---|---|
+| `thrusters`, `containers`, `tanks` | block name | `AtmosphericThruster250` → `atmosphericThruster250` |
+| `densities`, `resources` | definition filename | `Mostly Hollow.def` → `mostlyHollow` |
+| `thrustClasses` | the configuration's `$Key` | `Ion` → `ion` |
+
+Every reference (`density`, `consumedResource.resource`, `thrustClass`, a tank's `resource`) is one
+of these ids. **A GUID appearing anywhere in the config is a bug** — `tc verify` checks for it — with
+one deliberate exception: if two entries in the same collection would slug to the same id, the
+producer falls back to the GUID and emits an `ambiguousId` warning, because a silent merge would give
+blocks the wrong mass curve.
 
 ### 4.1 `densities`
 
@@ -148,17 +162,20 @@ silently invert.
   "thrustNewtons": 287136.3,
   "consumedResource": { "resource": "electricity", "ratePerThrust": 650 },
   "density": "mostlyHollow",
-  "occupiedCells": 288,                // V — Research §4.0
+  "occupiedCells": 288,                // V — Research §4.0.0
   "implemented": true,
-  "provenance": { "occupiedCells": "derived" }
+  "provenance": { "occupiedCells": "measured" }
 }
 ```
 
-- `thrustClass` is **nullable** — hydrogen thrusters omit it in the game data (Research §3). Consumers
-  must handle null, not assume a string.
-- `occupiedCells` is `derived` (recovered by solving the mass formula, Research §4.0). If it's
-  `null`, the consumer must report *"mass unknown"* — **never substitute zero**, which would silently
-  corrupt the self-weight solver (Technic §5.1).
+- `thrustClass` is **nullable** — hydrogen thrusters omit it in their own file and inherit it
+  (Research §3.4). The producer resolves that, but consumers must still handle null rather than
+  assuming a string.
+- `occupiedCells` is normally `measured`, read from the game's own content cache (Research §4.0.0).
+  It falls back to `derived` when extraction ran without the engine (`--no-engine`), where it comes
+  from solving the mass formula against known masses. If it's `null`, the consumer must report
+  *"mass unknown"* — **never substitute zero**, which would silently corrupt the self-weight solver
+  (Technic §5.1).
 - `implemented: false` covers blocks with art but no definition — underwater thrusters today
   (Research §3). They appear in the config so the UI can show "not in this build" (Design §4.4)
   rather than pretending they don't exist.
@@ -168,24 +185,25 @@ silently invert.
 ### 4.5 `containers` and `tanks`
 
 ```jsonc
-// containers
-{ "id": "cargoContainer250", "name": "Cargo Container 2.5m",
-  "maxMassKg": 67200, "density": "mostlyHollow", "occupiedCells": null,
-  "provenance": { "occupiedCells": "unknown" } }
+// containers  — note: containers are Hollow (7), not Mostly Hollow; they inherit it (Research §4.4.1)
+{ "id": "cargoContainer250", "name": "Cargo Container 2.5 m",
+  "maxMassKg": 67200, "density": "hollow", "occupiedCells": 1000 }
 
 // tanks
-{ "id": "hydrogenTank500", "name": "Hydrogen Tank 5m",
+{ "id": "hydrogenTank500", "name": "Hydrogen Tank 5 m",
   "resource": "hydrogen", "maxCapacity": 32000, "maxDischargeRate": 4000,
-  "density": "mostlyHollow", "occupiedCells": null }
+  "density": "mostlyHollow", "occupiedCells": 1820 }
 ```
 
 `maxMassKg` is the container's cargo *capacity*, directly from the game (Research §4.3) — distinct
 from the block's own mass, which is computed. Both are needed: Design §3.2's load presets scale the
 former, the self-weight solver uses the latter.
 
-Tank `maxCapacity` is in the referenced resource's `storageUnits`. **Converting a full tank to
-kilograms needs a mass-per-unit for hydrogen that we don't have yet** (Research §8) — until then the
-consumer reports tank contents as `unknown` provenance rather than guessing.
+Tank `maxCapacity` is in the referenced resource's `storageUnits`, and it is **display information
+only**. **Gas is massless in SE2** — measured in game by fitting an empty tank and watching it fill
+with the ship's mass unchanged (Backlog B3) — so a full tank weighs exactly what an empty one does,
+and `maxCapacity` never converts to kilograms. A tank contributes its own block mass and nothing
+else.
 
 ### 4.6 `planets`
 
@@ -194,13 +212,13 @@ consumer reports tank contents as `unknown` provenance rather than guessing.
   "id": "verdure",
   "name": "Verdure",
   "milestone": "VS2_3",                       // newest variant wins — Research §5.1
-  "surfaceGravity": 9.81,                     // m/s² — NOT in game data
+  "surfaceGravity": null,                     // m/s² — NEVER in game data, always the user's
   "gravityAffectDistance": 1.5,               // × planet radius
   "atmosphere": {
     "affectDistance": 1.15,                   // density → 0 here
     "constantAffectDistance": 1.08            // density = 1.0 up to here
   },
-  "provenance": { "surfaceGravity": "assumed" }
+  "provenance": { "surfaceGravity": "unknown" }
 }
 ```
 
@@ -208,9 +226,19 @@ Milestone-versioned duplicates exist in the game data (`Verdure` appears under V
 **The producer resolves this — one entry per planet, newest milestone wins** — so the consumer never
 sees a duplicate. `milestone` is retained for display and diagnostics.
 
-`surfaceGravity` is always `assumed`: it's world-instance data, not definition data (Research §5.3).
-A planet discovered with no gravity entry gets `null` + `"unknown"`, and the UI shows it with an
-empty editable field rather than hiding it — that's what makes new and custom planets work on day one.
+**`surfaceGravity` is `null` + `"unknown"` for every planet, always.** It is world-instance data set
+when a planet is spawned, not definition data, so the producer genuinely cannot read it (Research
+§5.3) — and it does not invent one. The UI supplies a working default the user can edit, and marks
+every number computed from it `assumed`. That is why *every* configuration row in the app carries an
+`assumed` badge; it is the gravity, not the thruster data.
+
+The upside of the same rule: a planet the producer has never heard of — a future Keen planet, or a
+player's custom one — appears in the list on the day it ships, needing exactly one number from the
+user.
+
+`atmosphere` may also be `null` + `"unknown"` when no geometry exists anywhere in the planet's
+inheritance chain. The consumer must read that as *unknown*, not as *airless*; today one unshipped
+planet is affected (Backlog B1).
 
 ---
 

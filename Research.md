@@ -149,7 +149,7 @@ Notes:
   never filename**, and treat missing `ThrustClass` as valid.
 - **There are 14 `ThrusterDefinitionObjectBuilder` definitions, not 12.** The table above was built by
   globbing `Content\Blocks\Thrusters\`, which misses two **base templates** in
-  `Content\Templates\Blocks\BaseDefinitions\`. Found by `tc dump-schemas`; see §3.2 — they resolve an
+  `Content\Templates\Blocks\BaseDefinitions\`. Found by `tc dump-schemas`; see §3.4 — they resolve an
   open question rather than being noise.
 - **`ResourcesRequiredToThrust` is not comparable across classes.** Atmospheric/Ion are Electricity
   (kW). Hydrogen's `0.75 … 120` against 60 kN … 19 MN is clearly a hydrogen flow rate in other units.
@@ -161,7 +161,117 @@ Notes:
 - Thrust does not follow a clean power law against size (thrust ÷ size³ for atmospheric:
   0.040 / 0.018 / 0.012 / 0.015 — non-monotonic). **Treat the table as data, never interpolate.**
 
-### 3.2 The base templates — and the answer to hydrogen's missing class
+### 3.1 Cross-check against the community wiki — and why it validates the whole premise
+
+[spaceengineers2.wiki.gg/wiki/Thruster_comparison](https://spaceengineers2.wiki.gg/wiki/Thruster_comparison)
+publishes a thruster table. Comparing it against the game files above is *extremely* instructive:
+
+| Block | Game `ThrustPower` | Wiki thrust | Verdict |
+|---|---:|---:|---|
+| Atmo 250 / 500 / 1000 | 287 136 / 1 516 383 / 15 465 370 | identical | ✅ match |
+| **Atmo 100** | **40 000** | **16 273** | ❌ **wiki stale** (also 75 kW vs wiki 50 kW) |
+| Hydrogen 50 / 200 / 250 / 750 | 60 000 / 359 469 / 1 895 631 / 19 395 660 | identical | ✅ match |
+| **Ion 100** | **8 950** | 16 270 | ❌ mismatch |
+| **Ion 150** | **82 493** | 287 130 | ❌ mismatch |
+| **Ion 500** | **856 369** | 1 516 380 | ❌ mismatch |
+| **Ion 750** | **5 636 987** | 15 465 370 | ❌ mismatch |
+
+Two distinct failures, and both are worth understanding:
+
+1. **Atmo 100 is genuinely stale** — the game was retuned (16 273 N → 40 000 N, 50 kW → 75 kW) and
+   the wiki hasn't caught up.
+2. **The entire ion thrust column is a copy-paste of the atmospheric column.** Wiki ion values
+   (16 270 / 287 130 / 1 516 380 / 15 465 370) are the atmospheric values to within rounding. The
+   *power* column is correct (40/240/1800/8000 all match the game). Real ion thrust is roughly
+   **3.5–5× lower** than the wiki claims.
+
+**This is the strongest possible argument for the app's core premise.** A player sizing an ion-thruster
+ship off the wiki would under-build by a factor of ~4 and their ship would not fly. Reading the game
+files is not a nice-to-have.
+
+**Use the wiki as a cross-check oracle, never as a source.** It was used exactly that way here, by
+hand, once — and it earned its keep, since its mass column is what the formula was verified against
+(§4.0).
+
+A `compare` CLI command diffing against a checked-in wiki snapshot was proposed and **rejected**: the
+snapshot is hand-maintained, slow to update, and demonstrably error-prone, so it would generate
+diffs that mostly mean "the wiki is stale again" (Technic §11). `tc verify` checks invariants against
+the game instead, which is the check that can actually fail usefully.
+
+### 3.2 The wiki *does* give us something the game files don't: mass
+
+The wiki's mass column has no counterpart in the definition files (§4), so it can't be cross-checked
+— but it's the only mass data we have, and mass is now a v1 blocker (Design: thruster self-weight).
+
+| Size | Atmospheric | Ion | Hydrogen |
+|---|---:|---:|---:|
+| 0.5 m | — | — | 33 kg |
+| 1 m | 58 kg | 58 kg | — |
+| 1.5 m | — | 290 kg | — |
+| 2 m | — | — | 464 kg |
+| 2.5 m | 464 kg | — | 1 005 kg |
+| 5 m | 1 552 kg | 1 576 kg | — |
+| 7.5 m | — | 6 188 kg | 7 096 kg |
+| 10 m | 8 343 kg | — | — |
+
+**Treat every figure here as `Assumed` provenance.** Given §3.1 showed an entire wiki column was
+copy-pasted wrong, and that Atmo 2.5 m and Hydrogen 2 m share a suspiciously identical 464 kg, these
+need in-game verification before being trusted. They are a starting point and a sanity check on any
+mass curve we derive, not ground truth.
+
+### 3.3 Environmental effectiveness — **found, and fully in data**
+
+A grep across `Blocks\Thrusters\` finds no effectiveness field, which initially looked like a dead
+end. It isn't: the model is **global, keyed by thrust class**, in
+`Content\System\Configurations\ThrustClassesConfiguration.def`:
+
+```json
+"$Type": "Game2:Keen.Game2.Simulation.GameSystems.Movement.ThrustClassesConfigurationObjectBuilder",
+"ThrustClasses": [
+  { "$Key": "Ion",
+    "$Value": { "MaxThrustAirDensity": 0.2, "MinThrustAirDensity":  0.8,
+                "WaterSubmersionTolerance": 1, "WaterOnly": false } },
+  { "$Key": "Atmospheric",
+    "$Value": { "MaxThrustAirDensity": 0.8, "MinThrustAirDensity":  0.2,
+                "WaterSubmersionTolerance": 1, "WaterOnly": false } },
+  { "$Key": "Hydrogen",
+    "$Value": { "MaxThrustAirDensity": 0,   "MinThrustAirDensity": -1,
+                "WaterSubmersionTolerance": 1, "WaterOnly": false } },
+  { "$Key": "Water",
+    "$Value": { "MaxThrustAirDensity": 0,   "MinThrustAirDensity": -1,
+                "WaterSubmersionTolerance": 1, "WaterOnly": true  } }
+]
+```
+
+**Note the `$Key` / `$Value` pair shape** — an earlier draft of this section flattened the fields up
+onto the entry, which is not what the file says. A parser written from the flattened version reads
+zero thrust classes and every thruster silently loses its environmental falloff.
+
+This is the SE1 `MinPlanetaryInfluence` / `EffectivenessAtMinInfluence` analogue, and it is **exactly
+the missing piece**. Reading it:
+
+- **Atmospheric** — full thrust at air density **≥ 0.8**, ramping to zero at **≤ 0.2**. Dead in vacuum.
+- **Ion** — inverted: full thrust at density **≤ 0.2**, ramping to zero at **≥ 0.8**. Note `Max` is
+  attached to the *low* density; the field names describe "the density at which max thrust occurs,"
+  not an ordering. **Do not assume `Min < Max`** when parsing.
+- **Hydrogen** — `Min = -1` is a sentinel meaning *no falloff*: constant thrust everywhere. Matches
+  the community understanding, and confirms hydrogen is the environment-agnostic option.
+- **Water** — `WaterOnly: true`. A fourth class **already exists in config** even though no underwater
+  thruster ships a definition (§3). Direct confirmation that underwater thrusters are staged for the
+  water milestone.
+
+Combined with §5.2's per-planet atmosphere geometry, this closes the loop: planet gives air density
+as a function of altitude, this config maps air density to a thrust multiplier per class. **The whole
+environmental model is readable JSON — no engine code required.**
+
+Between the two ramp points, assume linear interpolation on air density. That assumption should be
+verified in-game, but it's the standard SE1 behaviour and the two-point parameterisation strongly
+implies it.
+
+The wiki's "Space = 0 / Atmosphere = 1" annotations are a lossy summary of this table — another
+reason to treat the wiki as a cross-check, not a source (§3.1).
+
+### 3.4 The base templates — and the answer to hydrogen's missing class
 
 `Content\Templates\Blocks\BaseDefinitions\` holds two more thruster definitions, which concrete
 blocks inherit from:
@@ -179,8 +289,9 @@ Three things follow, all previously open:
    inherit it from this template. That closes the question of what the engine defaults to; it is
    *measured*, not inferred. `ThrustClassesConfiguration` already defines a `Hydrogen` entry
    (§3.3), and this is what points at it.
-2. **Template inheritance is real and must be implemented** — at least a one-level fallback for
-   fields absent on a concrete block.
+2. **Template inheritance is real and must be implemented.** An early draft guessed it was a
+   one-level fallback matched by shape; it is neither. The chain is explicit and arbitrarily deep,
+   pointed to by `BaseGuid` — see §4.4.1, which is the section to read before touching any of this.
 3. **`ThrustDirection` does exist in the data**, on the templates, as `"Forward"`.
 
 Templates must be **excluded from the block catalogue**: `HydrogenThrusterDefinition` has
@@ -188,7 +299,7 @@ Templates must be **excluded from the block catalogue**: `HydrogenThrusterDefini
 that produces nothing. They are identified by living under `Templates/` — the one place in this data
 where path carries meaning.
 
-### 3.3 How a block's definitions are joined
+### 3.5 How a block's definitions are joined
 
 A block is not one definition. A thruster's thrust lives in `*_ThrusterDefinition.def`, while its
 density, PCU and name live in `*_PowerableBlockDefinition.def` — and **neither file names the other**.
@@ -222,103 +333,6 @@ Note the GUIDs sit **inline** in the `Changed` array, so shallow delta decoding 
 thrusters report `ThrusterAtmo` and all four ions report `ThrusterIon`; hydrogen blocks inherit
 `ThrusterHydro` from their template. It is a family key. Display names must be synthesised by the
 producer (Schema.md §8).
-
-### 3.1 Cross-check against the community wiki — and why it validates the whole premise
-
-[spaceengineers2.wiki.gg/wiki/Thruster_comparison](https://spaceengineers2.wiki.gg/wiki/Thruster_comparison)
-publishes a thruster table. Comparing it against the game files above is *extremely* instructive:
-
-| Block | Game `ThrustPower` | Wiki thrust | Verdict |
-|---|---:|---:|---|
-| Atmo 250 / 500 / 1000 | 287 136 / 1 516 383 / 15 465 370 | identical | ✅ match |
-| **Atmo 100** | **40 000** | **16 273** | ❌ **wiki stale** (also 75 kW vs wiki 50 kW) |
-| Hydrogen 50 / 200 / 250 / 750 | 60 000 / 359 469 / 1 895 631 / 19 395 660 | identical | ✅ match |
-| **Ion 100** | **8 950** | 16 270 | ❌ mismatch |
-| **Ion 150** | **82 493** | 287 130 | ❌ mismatch |
-| **Ion 500** | **856 369** | 1 516 380 | ❌ mismatch |
-| **Ion 750** | **5 636 987** | 15 465 370 | ❌ mismatch |
-
-Two distinct failures, and both are worth understanding:
-
-1. **Atmo 100 is genuinely stale** — the game was retuned (16 273 N → 40 000 N, 50 kW → 75 kW) and
-   the wiki hasn't caught up.
-2. **The entire ion thrust column is a copy-paste of the atmospheric column.** Wiki ion values
-   (16 270 / 287 130 / 1 516 380 / 15 465 370) are the atmospheric values to within rounding. The
-   *power* column is correct (40/240/1800/8000 all match the game). Real ion thrust is roughly
-   **3.5–5× lower** than the wiki claims.
-
-**This is the strongest possible argument for the app's core premise.** A player sizing an ion-thruster
-ship off the wiki would under-build by a factor of ~4 and their ship would not fly. Reading the game
-files is not a nice-to-have.
-
-**Use the wiki as a cross-check oracle, never as a source.** Concretely: the CLI should have a
-`compare` command that diffs extracted values against a checked-in wiki snapshot, so discrepancies
-surface as a report rather than a surprise.
-
-### 3.2 The wiki *does* give us something the game files don't: mass
-
-The wiki's mass column has no counterpart in the definition files (§4), so it can't be cross-checked
-— but it's the only mass data we have, and mass is now a v1 blocker (Design: thruster self-weight).
-
-| Size | Atmospheric | Ion | Hydrogen |
-|---|---:|---:|---:|
-| 0.5 m | — | — | 33 kg |
-| 1 m | 58 kg | 58 kg | — |
-| 1.5 m | — | 290 kg | — |
-| 2 m | — | — | 464 kg |
-| 2.5 m | 464 kg | — | 1 005 kg |
-| 5 m | 1 552 kg | 1 576 kg | — |
-| 7.5 m | — | 6 188 kg | 7 096 kg |
-| 10 m | 8 343 kg | — | — |
-
-**Treat every figure here as `Assumed` provenance.** Given §3.1 showed an entire wiki column was
-copy-pasted wrong, and that Atmo 2.5 m and Hydrogen 2 m share a suspiciously identical 464 kg, these
-need in-game verification before being trusted. They are a starting point and a sanity check on any
-mass curve we derive, not ground truth.
-
-### 3.3 Environmental effectiveness — **found, and fully in data**
-
-A grep across `Blocks\Thrusters\` finds no effectiveness field, which initially looked like a dead
-end. It isn't: the model is **global, keyed by thrust class**, in
-`Content\System\Configurations\ThrustClassesConfiguration.def`:
-
-```json
-"$Type": "Game2:Keen.Game2.Simulation.GameSystems.Movement.ThrustClassesConfigurationObjectBuilder",
-"ThrustClasses": [
-  { "$Key": "Ion",         "MaxThrustAirDensity": 0.2, "MinThrustAirDensity":  0.8,
-                           "WaterSubmersionTolerance": 1, "WaterOnly": false },
-  { "$Key": "Atmospheric", "MaxThrustAirDensity": 0.8, "MinThrustAirDensity":  0.2,
-                           "WaterSubmersionTolerance": 1, "WaterOnly": false },
-  { "$Key": "Hydrogen",    "MaxThrustAirDensity": 0,   "MinThrustAirDensity": -1,
-                           "WaterSubmersionTolerance": 1, "WaterOnly": false },
-  { "$Key": "Water",       "MaxThrustAirDensity": 0,   "MinThrustAirDensity": -1,
-                           "WaterSubmersionTolerance": 1, "WaterOnly": true  }
-]
-```
-
-This is the SE1 `MinPlanetaryInfluence` / `EffectivenessAtMinInfluence` analogue, and it is **exactly
-the missing piece**. Reading it:
-
-- **Atmospheric** — full thrust at air density **≥ 0.8**, ramping to zero at **≤ 0.2**. Dead in vacuum.
-- **Ion** — inverted: full thrust at density **≤ 0.2**, ramping to zero at **≥ 0.8**. Note `Max` is
-  attached to the *low* density; the field names describe "the density at which max thrust occurs,"
-  not an ordering. **Do not assume `Min < Max`** when parsing.
-- **Hydrogen** — `Min = -1` is a sentinel meaning *no falloff*: constant thrust everywhere. Matches
-  the community understanding, and confirms hydrogen is the environment-agnostic option.
-- **Water** — `WaterOnly: true`. A fourth class **already exists in config** even though no underwater
-  thruster ships a definition (§3). Direct confirmation that underwater thrusters are staged for the
-  water milestone.
-
-Combined with §5.2's per-planet atmosphere geometry, this closes the loop: planet gives air density
-as a function of altitude, this config maps air density to a thrust multiplier per class. **The whole
-environmental model is readable JSON — no engine code required.**
-
-Between the two ramp points, assume linear interpolation on air density. That assumption should be
-verified in-game, but it's the standard SE1 behaviour and the two-point parameterisation strongly
-implies it.
-
-The wiki's "Space = 0 / Atmosphere = 1" annotations are a lossy summary of this table — another
-reason to treat the wiki as a cross-check, not a source (§3.1).
 
 ---
 
@@ -424,13 +438,19 @@ is elongated (6×6×8), the 1.5 m container really is a cube (6³).
 
 Consequences:
 
-- **The hand-maintained cell-count table becomes unnecessary.** The cache covers 1,454 blocks
-  against our 16, so containers, tanks and everything else are included.
-- The occupancy is a `BoundingBoxI`; `V` is `(max − min + 1)` per axis, multiplied — matching
-  `ComputeMassAndHP`'s `GetSizeIncludingMax().Volume()`.
+- **The hand-maintained cell-count table stops being the source.** The cache covers 1,454 blocks
+  against our 16, so containers, tanks and everything else are included. The table is *kept*, as a
+  fallback for runs without the engine and as an independent cross-check — which is what caught the
+  bug in the next bullet (Backlog B13).
+- **`V` is the sum of `Occupancy.CellGroups`, *not* the volume of `Occupancy.Bounds`.** The first
+  implementation read the bounding box, which is correct only for blocks that are a single box. The
+  5 m hydrogen tank occupies **1,820** cells inside a 20×10×10 = **2,000** box — a 10% mass
+  overstatement. `ComputeMassAndHP` sums the groups, so we must too. Caught purely because the
+  recovered table disagreed; with one source it would have shipped silently.
 - It requires hosting the game's assemblies, so it belongs in the quarantined producer-side
-  `Engine` project that Technic §2.3 reserved and deliberately left uncreated. That reservation now
-  has a concrete reason to be taken up.
+  `Engine` project that Technic §2.3 had reserved and left uncreated. **That reservation has since
+  been taken up** — `ThrusterCalculator.Engine` exists and `tc extract` reports
+  `Occupancy source: content-cache`.
 
 **It does not solve density.** The cache holds *generated* data, not merged definitions, so §4.4's
 container-density question stands unchanged.
@@ -459,11 +479,15 @@ factors as 6×6×4 = 1.5 m × 1.5 m × 1 m. Larger thrusters give V well below t
 consistent with tapered nozzle colliders.
 
 Generated block data is cached in `Content\contentcache.vrb` (26 MB) — binary, so reading it directly
-means the `.vrb` path (§5.4). **We don't need to.** See Technic §10 for the resolution: store the
-per-block integer `V` in the extracted config. It's ~20 integers, they're recoverable exactly (above),
-and because `MassCurveModifier` and `MinBlockMass` still come from `.def`, **retuning tracks
-automatically** — only a change to a block's collision mesh invalidates V, which is rare and shows up
-immediately as a mismatch against in-game mass.
+means the `.vrb` path (§5.4).
+
+**An earlier draft concluded "we don't need to", and that was wrong** — see §4.0.0, which does read
+it. Solving the formula backwards works but only reaches blocks whose in-game mass someone has
+measured by hand; the cache covers all 1,454. What survives from the original reasoning is the
+storage decision: the per-block integer `V` goes into the extracted config, so the *consumer* never
+touches the cache. And because `MassCurveModifier` and `MinBlockMass` still come from `.def`,
+**retuning tracks automatically** — only a change to a block's collision mesh invalidates `V`, which
+is rare and shows up immediately as a mismatch against in-game mass.
 
 ### 4.1 Assembly-level details (how the above was obtained)
 
@@ -555,9 +579,11 @@ of 25 cm cells, which independently corroborates the cell size.
 **Cargo containers stall on density, not on V.** Their base definition
 `Templates/Blocks/BaseDefinitions/CargoContainersFunctionalBlockDefinition.def` gives
 `Density = 3dca2cf9` — **Hollow (7)** — and with that modifier CargoContainer150's published
-245.17 kg solves to `V = 216`, the same 6³ cube as the tank. But the extractor cannot *reach* that
-template: it is a **standalone base definition with no template composite**, and the slot-signature
-inheritance (Technic §7.2.2) only matches templates that have one.
+245.17 kg solves to `V = 216`, the same 6³ cube as the tank. But at the time the extractor could not
+*reach* that template: it is a **standalone base definition with no template composite**, and the
+slot-signature inheritance then in use could only match templates that had one.
+
+That dead end is what forced the search for a real parent pointer — and §4.4.1 found it.
 
 ### 4.4.1 SOLVED — the parent pointer lives in `definitionsets.vrb`
 
@@ -631,10 +657,16 @@ extracted as unknown rather than assumed, and deferred until the planet ships (B
 ### 4.5 Which planets actually matter
 
 Only **Verdure** and **Kemik** are reachable in the current build; the other eight ship as data but
-are not playable. That sharpens §5.3 rather than softening it: both playable planets are among those
-whose atmosphere geometry we cannot read and must assume. The assumption is harmless for v1, which
-sizes at the surface where density is 1.0 regardless, but it is exactly the value an altitude
-feature would depend on.
+are not playable.
+
+An earlier draft noted that both playable planets were among those whose atmosphere geometry we could
+not read — which made the gap matter far more than a count of 8-of-10 suggested. **§4.4.2 closed
+it:** the `BaseGuid` walk resolves both from the game's own chain, so Verdure and Kemik are now
+`measured`. One planet remains unknown (Geomeles, Backlog B1) and it is not in the game.
+
+What is still assumed for every planet is **surface gravity magnitude**, which is world-instance data
+and genuinely not in the definitions (§5.3). That is the number the user edits, and it is why every
+configuration in the UI carries `assumed` provenance.
 
 ---
 
@@ -778,28 +810,48 @@ override.
 ## 8. Open questions, ranked
 
 **All v1 blockers are now closed** — the mass formula (§4.0), environmental effectiveness (§3.3),
-cargo/tank capacity (§4.3), atmosphere geometry (§5.2). What remains is refinement, not blocking:
+cargo/tank capacity (§4.3), atmosphere geometry (§5.2), block occupancy (§4.0.0) and definition
+inheritance (§4.4.1). What remains is refinement, not blocking.
 
-1. **Recover `V` for cargo containers and tanks** the same way the thruster values were recovered
-   (§4.0) — needs their in-game masses. Mechanical.
-2. **Air-density-vs-altitude curve shape** — §5.2 gives full density to 1.08 R and zero at 1.15 R;
+Still open:
+
+1. **Air-density-vs-altitude curve shape** — §5.2 gives full density to 1.08 R and zero at 1.15 R;
    §3.3 gives density → thrust multiplier. Is the density ramp between them linear? And is the
    thrust ramp between `MinThrustAirDensity` and `MaxThrustAirDensity` linear? Verify in-game.
-4. **Surface gravity magnitude per planet** (§5.3) — curated editable table for v1;
-   `VRage.Voxels.SurfaceGravity` is the faithful route.
-5. **Hydrogen mass per capacity unit** (§4.3) — needed to turn full tanks into kilograms.
-6. **`ResourcesRequiredToThrust` units per class** (§3) — resolve each `ConsumedResource` GUID.
-7. ~~Template inheritance~~ — **confirmed real and implemented** (§3.2). It is more pervasive than
-   first thought: besides hydrogen's `ThrustClass`, **seven of twelve thrusters inherit their
-   `Density`** rather than restating it, so without it their mass cannot be computed at all.
-   Templates are matched by component-slot signature, most specific wins (Technic.md §7.2.1).
-8. ~~Hydrogen's missing `ThrustClass`~~ — **answered** (§3.2): the `HydrogenThrusterDefinition`
+   (Backlog B6.)
+2. **Surface gravity magnitude per planet** (§5.3) — user-editable value for v1;
+   `VRage.Voxels.SurfaceGravity` is the faithful route, and the engine hosting it needs now exists.
+3. **Verify the 750 cargo container's 2 150 400 kg** (§4.3) — plausibly a placeholder.
+
+Closed, kept because the answers are load-bearing:
+
+4. ~~Recover `V` for cargo containers and tanks~~ — **superseded** (§4.0.0). The content cache gives
+   occupancy for 1,454 blocks, so nothing needs solving by hand.
+5. ~~Hydrogen mass per capacity unit~~ — **answered**: gas is massless, measured in game by watching
+   a tank fill (§4.3, Backlog B3). Tank contents never convert to kilograms.
+6. ~~`ResourcesRequiredToThrust` units per class~~ — **answered** (§3): resolve each block's
+   `ConsumedResource.Type` GUID. Electricity is kW; hydrogen is L/s. Not comparable across classes.
+   Note the GUID is usually **inherited**, not stated on the block.
+7. ~~Template inheritance~~ — **confirmed real, and the mechanism is `BaseGuid`** (§4.4.1), not the
+   slot-signature matching an earlier draft described. More pervasive than first thought: besides
+   hydrogen's `ThrustClass`, seven of twelve thrusters inherit `Density`, no container states one,
+   and most planets inherit their atmosphere.
+8. ~~Hydrogen's missing `ThrustClass`~~ — **answered** (§3.4): the `HydrogenThrusterDefinition`
    template supplies `"Hydrogen"`. Measured, not assumed.
-9. **Verify the 750 cargo container's 2 150 400 kg** (§4.3) — plausibly a placeholder.
 
-## 9. First implementation task
+## 9. The tooling this research produced
 
-Build the **`dump-schemas` CLI command** (not a throwaway script — see Technic §5.1): walk all 17,172
-`.def` files, group by `$Type`, emit the distinct field set per type. That single artefact answers
-Q2, Q5, Q6 at once, tells us exactly which `$Type`s the reader must support, and becomes the
-patch-diffing tool for every future game update.
+**`tc dump-schemas`** — walks all 17,172 `.def` files, groups by `$Type`, emits the distinct field
+set per type. Built first, and it earned its keep immediately: it found the two base templates §3.4
+turns on, and it corrected a claim in this document that `ThrustDirection` appeared in no `.def`
+(Technic §10.4). **It is the patch-diffing tool** — on patch day, dump and diff against the previous
+output.
+
+**`tc verify`** — invariant checks against a real local install: every thruster pairs to a block
+definition, every referenced GUID resolves, all thrust positive (templates excluded — they carry
+`ThrustPower: 0`, and an early version of this check failed on them, which was the check being wrong,
+not the data).
+
+Together they are the answer to Technic §7.1.1's genuine gap: **CI can never catch "Keen changed the
+data format", because no runner has the game.** These two commands are the manual substitute, and
+running them is a routine patch-day action rather than something to hope CI covers.

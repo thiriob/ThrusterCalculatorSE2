@@ -1,0 +1,36 @@
+{
+  "$Bundles": { "Game2": "9.9.9.111" },
+  "$Type": "Game2:Keen.Test.Fake.Movement.ThrustClassesConfigurationObjectBuilder",
+  "$Value": {
+    "Guid": "eeeeeeee-0000-0000-0000-000000000001",
+    "ThrustClasses": [
+      {
+        "$Key": "TestAtmo",
+        "$Value": {
+          "MaxThrustAirDensity": 0.8,
+          "MinThrustAirDensity": 0.2,
+          "WaterSubmersionTolerance": 1,
+          "WaterOnly": false
+        }
+      },
+      {
+        "$Key": "TestIon",
+        "$Value": {
+          "MaxThrustAirDensity": 0.2,
+          "MinThrustAirDensity": 0.8,
+          "WaterSubmersionTolerance": 1,
+          "WaterOnly": false
+        }
+      },
+      {
+        "$Key": "TestHydrogen",
+        "$Value": {
+          "MaxThrustAirDensity": 0,
+          "MinThrustAirDensity": -1,
+          "WaterSubmersionTolerance": 1,
+          "WaterOnly": false
+        }
+      }
+    ]
+  }
+}

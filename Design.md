@@ -62,11 +62,15 @@ no unresolved research. **This is the default and always available.**
 tank — and the app resolves total mass from game data.
 
 Research §4.3 confirms Path B is mostly free: `CargoContainer150/250/750` carry `MaxMass`
-(16 800 / 67 200 / 2 150 400 kg) and tanks carry `MaxCapacity` directly. The gap is *block* mass
-(Research §4), which is `Assumed` until the mass curve lands.
+(16 800 / 67 200 / 2 150 400 kg) directly.
 
-So Path B shows: **container/tank contents = `Measured`, block masses = `Assumed`**, plus a hull mass
-the user still enters. P2 makes that honest rather than confusing.
+Both gaps that used to sit here are now closed. **Block mass is computed** from the game's own
+formula over measured inputs (Research §4.0, §4.0.0), so it is `Derived`, not `Assumed`. And **tank
+contents are free because gas is massless** (Backlog B3) — tanks contribute their block mass and
+nothing else, which is why the "tanks always full" rule below costs the user nothing.
+
+So Path B shows: **cargo capacity and block masses both resolved from game data**, plus a hull mass
+the user still enters. The only `Assumed` input left in the whole flow is planet surface gravity.
 
 ### 3.1.1 Which planets to show
 
@@ -79,6 +83,11 @@ so the common case needs no scrolling.
 
 **Tanks are always full. Cargo varies.** Fuel is the thing you can't choose to leave behind, so
 treating tanks as anything but full would flatter the numbers.
+
+As it turns out, **the rule costs nothing to honour**: gas is massless in SE2 (Backlog B3), so a
+tank's fill level does not move the ship's mass at all and the three presets differ by cargo alone.
+The rule stays stated because it is the right rule, and because it would start to bite the moment
+Keen gives gas a mass — at which point the presets already mean the right thing.
 
 | Preset | Cargo | Tanks |
 |---|---|---|
@@ -233,7 +242,7 @@ Single window, live recompute — not a wizard.
 │  ─────────────────────────  │   │   supports 501–581 t · 14% headroom      │   │
 │  Dry    300 t               │   │ Ion 1.5 m          ✕ no thrust in atmo    │   │
 │  Cargo  269 t (full)        │   └──────────────────────────────────────────┘   │
-│  Tanks   ~2 t ⚠             │                                                  │
+│  Tanks    2 t (blocks only) │                                                  │
 │  Total  571 t               │   ⓘ Assumes no thrusters currently installed.    │
 │                             │   ⚠ = Assumed value — click to edit              │
 ├─────────────────────────────┴─────────────────────────────────────────────────┤
@@ -243,8 +252,11 @@ Single window, live recompute — not a wizard.
 
 Notes on the sketch:
 
-- **⚠ marks `Assumed` values inline** and they're editable in place — P2 in practice. Gravity, hull
-  mass, and block masses all carry it until Research §8 Q1/Q4 close.
+- **⚠ marks `Assumed` values inline** and they're editable in place — P2 in practice. Only two carry
+  it now: planet surface gravity, which is world-instance data the producer can never read
+  (Research §5.3), and the hull mass the user types. Block masses are `Derived` from game data.
+- **Tanks show block mass only**, with no ⚠: gas is massless (Backlog B3), so a full tank weighs what
+  an empty one does. Saying so beats leaving the reader to wonder where the fuel went.
 - **Ion shows a reason, not a number.** "✕ no thrust in atmosphere" is the useful answer; a `0` or a
   blank row is not.
 - Each configuration shows **count, added mass, draw, and supported range** — everything needed to

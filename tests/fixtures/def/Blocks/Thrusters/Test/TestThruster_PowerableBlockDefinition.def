@@ -4,6 +4,7 @@
   "$Value": {
     "Guid": "bbbbbbbb-0000-0000-0000-000000000001",
     "UIData": { "Name": "TestThrusterFamily" },
-    "Density": "cccccccc-0000-0000-0000-000000000001"
+    "Density": "cccccccc-0000-0000-0000-000000000001",
+    "ConsumedResource": { "Amount": 0 }
   }
 }

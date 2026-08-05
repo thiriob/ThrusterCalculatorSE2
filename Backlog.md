@@ -160,7 +160,7 @@ release therefore needs `tc extract` run on a machine with the game (Technic §3
 the binary fetching its config from the same host that serves the web build — becomes attractive the
 moment a host exists.
 
-### B13 — The 7.5 m container aside, one hand-maintained table remains
+### B13 — One hand-maintained table remains, deliberately
 
 `OccupiedCellsTable` is now only a fallback for when the game's assemblies cannot be hosted; the
 content cache supersedes it and covers ~1 450 blocks against its 16. It is kept deliberately as an

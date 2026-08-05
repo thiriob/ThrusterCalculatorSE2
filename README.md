@@ -35,7 +35,7 @@ The game files had it right. That's the whole premise.
 Two programs that never link to each other, joined by a versioned JSON file:
 
 ```
-  PRODUCER (th)                      CONSUMER (GUI / web)
+  PRODUCER (tc.exe)                  CONSUMER (GUI / web)
   scans the game's .def files  -->   reads gamedata.json
   needs: SE2 installed, Windows      needs: nothing
 ```
