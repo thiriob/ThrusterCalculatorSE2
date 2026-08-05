@@ -2,8 +2,12 @@
 
 | | Size | Needs |
 |---|---|---|
-| `…-win-x64.zip` | ~200 MB | **Nothing.** Take this one if unsure |
+| `…-win-x64.zip` | ~260 MB | **Nothing.** Take this one if unsure |
 | `…-win-x64-requires-dotnet9.zip` | ~30 MB | [.NET 9 **Desktop** Runtime, x64](https://dotnet.microsoft.com/download/dotnet/9.0) |
+
+Either way the folder holds two programs — `ThrusterCalculator.Gui.exe` to use it, and `tc.exe`
+which reads your game — plus `sample-gamedata.json`. The first launch takes a moment longer than
+later ones while the graphics libraries unpack.
 
 The small one needs the *Desktop* runtime specifically, not the plain one — `tc.exe` hosts the
 game's own assemblies to read block data, and those pull in WPF and WinForms. With only the base
@@ -24,7 +28,7 @@ The download deliberately contains **no game data.** On first launch you will se
 the numbers are samples, and a **Rebuild** button at the bottom of the window.
 
 Click it. `tc.exe` reads your own installed copy of Space Engineers 2 and writes `gamedata.json`
-beside the app. Restart, and every figure comes from the build you actually have installed.
+beside the app, and the window updates in place — no restart, and nothing you have typed is lost.
 
 **Why it works this way.** The thruster values move with every patch, so a config baked into a
 release is out of date the moment Keen ships one — and shipping their numbers is not ours to do

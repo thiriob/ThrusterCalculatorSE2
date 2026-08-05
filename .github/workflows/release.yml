@@ -40,16 +40,33 @@ jobs:
           echo "Version is $version"
 
       # Re-running main without a bump must not fail the pipeline — it just has nothing to publish.
+      #
+      # Say so on the run's summary page, not only in the log. A skipped release looks identical to
+      # a broken one from the outside, and "why did nothing happen?" is a question worth answering
+      # where the person is already looking.
       - name: Has this version shipped?
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.read.outputs.value }}
         run: |
-          if gh release view "v${{ steps.read.outputs.value }}" >/dev/null 2>&1; then
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::v${{ steps.read.outputs.value }} is already released. Bump <Version> to ship again."
+            echo "::notice::v$VERSION is already released — nothing to publish."
+            {
+              echo "### No release published"
+              echo
+              echo "\`v$VERSION\` already exists, so this run built nothing."
+              echo
+              echo "To ship, raise \`<Version>\` in \`src/Directory.Build.props\` and push to main."
+            } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Publishing v$VERSION"
+              echo
+              echo "No release exists for this version yet, so both portable zips will be built."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
   package:
@@ -84,18 +101,28 @@ jobs:
       # Both apps publish into ONE folder: the GUI spawns tc.exe from beside itself, so they have
       # to ship together.
       #
-      # Order matters. Cli last: it carries the WindowsDesktop runtime (WPF + WinForms) that the
-      # engine needs to host the game's assemblies, and that set is a superset of the GUI's.
+      # Single-file, so the folder is two executables and an Assets directory rather than the 45 to
+      # 514 loose DLLs it would otherwise be. Someone opening the folder can see what to run.
+      #
+      # IncludeNativeLibrariesForSelfExtract pulls Skia and friends inside too; they are unpacked to
+      # a temp directory on first launch, which costs a moment the first time only.
+      #
+      # It is not free for the self-contained build: single-file means each executable carries its
+      # own copy of the runtime rather than sharing one folder, so ~200 MB becomes ~260. Worth it —
+      # a directory of 514 files gives a user no idea which one starts the app, and this build
+      # exists for the people who least want to think about it.
       - name: Publish GUI
         run: >
           dotnet publish src/ThrusterCalculator.Gui
           -c Release -r ${{ env.RUNTIME }} --self-contained ${{ matrix.self-contained }}
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
           -o publish
 
       - name: Publish CLI
         run: >
           dotnet publish src/ThrusterCalculator.Cli
           -c Release -r ${{ env.RUNTIME }} --self-contained ${{ matrix.self-contained }}
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
           -o publish
 
       # The release must contain no Space Engineers data — see License.md. There is no gamedata.json
