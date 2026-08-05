@@ -74,10 +74,18 @@ the user still enters. The only `Assumed` input left in the whole flow is planet
 
 ### 3.1.1 Which planets to show
 
-Only **Verdure** and **Kemik** are reachable in the current game build, though ten ship as data.
-Per §4.4 the others are still listed rather than hidden — "does this exist yet?" is a real question
-during alpha — but the playable two should be **ordered first and used as the default selection**,
-so the common case needs no scrolling.
+Four are reachable in the current build — **Verdure, Kemik, Caligo and Palatine** — though ten ship
+as data. Per §4.4 the rest are listed rather than hidden ("does this exist yet?" is a real question
+during alpha), but the playable ones come **first, under a heading, and one of them is the default
+selection**, so the common case needs no scrolling.
+
+**Which are playable is derived, never listed.** A planet is playable when its milestone matches the
+milestone of the game build the config came from (`Core.PlanetAvailabilityRules`), so the grouping
+re-derives itself when Keen ships the next one. An earlier version hardcoded `{verdure, kemik}` here
+and was silently wrong the moment Caligo and Palatine became reachable.
+
+The dropdown groups into **Playable / Custom / Older milestones / Not in this build yet**, with
+headings shown only for groups that have members.
 
 ### 3.2 Load presets
 
@@ -208,7 +216,7 @@ game (Technic §1). Three audiences get their config three ways, and only one of
 | Audience | Config source | Rebuilds? |
 |---|---|---|
 | Web users | Served by the host | Never — not their concern |
-| Desktop binary users | Bundled in the release | **Sometimes** — see below |
+| Desktop binary users | Generated on first run by the bundled `tc.exe` | **Yes** — once, then on patch day |
 | Power users / self-hosters | `tc extract` on their own install | Yes, by CLI |
 
 ### 4.5.1 Should the desktop GUI rebuild at all?

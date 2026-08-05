@@ -73,7 +73,7 @@
                 IsVisible="{Binding IsSampleData}">
             <TextBlock TextWrapping="Wrap" Foreground="White">
                 <Run Text="Sample data — these are not real Space Engineers 2 values." FontWeight="SemiBold" />
-                <Run Text="Run 'tc extract' to generate gamedata.json from your installed game." />
+                <Run Text="{Binding SampleDataAdvice}" />
             </TextBlock>
         </Border>
 

@@ -1,0 +1,88 @@
+# GitLab CI — mirrors .github/workflows/ci.yml.
+#
+# Both call the same scripts/check-no-game-data.sh rather than restating the rule in YAML twice,
+# so the two pipelines cannot drift apart on the check that actually matters.
+
+stages:
+  - test
+  - verify
+  - release
+
+variables:
+  DOTNET_NOLOGO: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  # Keep the NuGet cache inside the build directory so GitLab can cache it between runs.
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget"
+
+cache:
+  key:
+    files:
+      - src/Directory.Build.props
+  paths:
+    - .nuget/
+
+# The consumer half plus Extraction are plain net9.0 and need no game installed, which is the whole
+# point of the producer/consumer split (Technic.md §1). They test anywhere.
+#
+# Projects, not the solution: Engine and Cli target net9.0-windows and cannot restore on Linux.
+test:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:9.0
+  script:
+    - |
+      for project in Model Core Extraction Gui; do
+        dotnet test "src/ThrusterCalculator.$project.Tests/ThrusterCalculator.$project.Tests.csproj" \
+          --configuration Release
+      done
+
+# The repo must never contain anything derived from Space Engineers 2 (Technic.md §7.1).
+# .gitignore is advisory; this is the part that fails loudly.
+no-game-data:
+  stage: verify
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache git
+  script:
+    - sh scripts/check-no-game-data.sh
+
+# Engine and Cli are Windows-only and nothing above compiles them, so they can rot unnoticed.
+# gitlab.com's shared Windows runners are not available on every plan, so this stays opt-in rather
+# than failing pipelines on projects that cannot schedule it: set RUN_WINDOWS_BUILD to enable.
+build-windows:
+  stage: test
+  tags:
+    - windows
+  rules:
+    - if: $RUN_WINDOWS_BUILD
+  script:
+    - dotnet build src/ThrusterCalculatorSE2.slnx --configuration Release
+
+# Portable, self-contained zip. Mirrors .github/workflows/release.yml.
+#
+# Needs a Windows runner, so on gitlab.com this only runs where one is available. Both apps publish
+# into ONE folder — the GUI spawns tc.exe from beside itself — and the CLI goes last because it
+# carries the WindowsDesktop runtime (WPF + WinForms) the engine needs to host the game's
+# assemblies, a superset of the GUI's.
+#
+# No gamedata.json ships, by design: the user generates their own with the bundled tc.exe. See
+# License.md — the numbers are Keen's, and a baked-in config would be stale on the next patch.
+package:
+  stage: release
+  tags:
+    - windows
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  variables:
+    RUNTIME: win-x64
+  script:
+    - dotnet publish src/ThrusterCalculator.Gui -c Release -r $RUNTIME --self-contained true -o publish
+    - dotnet publish src/ThrusterCalculator.Cli -c Release -r $RUNTIME --self-contained true -o publish
+    - ./publish/tc.exe --help
+    - pwsh -Command "if (Get-ChildItem publish -Recurse -Include gamedata.json,*.def,*.vrb) { throw 'Game data found in publish output' }"
+    - pwsh -Command "Compress-Archive -Path publish/* -DestinationPath ThrusterCalculatorSE2-$env:CI_COMMIT_TAG-$env:RUNTIME.zip"
+  artifacts:
+    name: "ThrusterCalculatorSE2-$CI_COMMIT_TAG"
+    paths:
+      - ThrusterCalculatorSE2-*.zip
+    expire_in: never

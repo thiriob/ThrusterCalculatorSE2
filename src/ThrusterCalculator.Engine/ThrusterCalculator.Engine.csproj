@@ -17,8 +17,17 @@
       SpaceEngineers2.runtimeconfig.json requires Microsoft.WindowsDesktop.App, and the game
       assemblies bind against it once loaded in-process. UseWPF pulls that shared framework in;
       without it the engine types fail to resolve at runtime.
+
+      UseWindowsForms is needed too, and only shows up in a SELF-CONTAINED publish. A framework
+      -dependent build finds System.Windows.Forms lying on disk next to WPF, so a dev machine never
+      notices; publishing self-contained trims the runtime to what the app declares, and hosting
+      then fails with "Could not load file or assembly 'System.Windows.Forms'". The producer
+      degrades rather than crashing, so the symptom is not an error — it is a quietly worse config:
+      occupancy falls back to the 16-entry table, inheritance resolves nothing, and every planet
+      loses its surface gravity. Caught only by publishing and running `tc extract` from the output.
     -->
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
   <ItemGroup>

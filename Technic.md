@@ -30,8 +30,9 @@ discovery, 17k-file scanning, delta decoding, engine calls.
 
 This is the strongest available version of the decoupling, and it pays for itself several times:
 
-- **Ship a config with each release.** Users get correct numbers on first launch with no game
-  interaction at all.
+- **The release needs no data in it.** `tc.exe` ships beside the app, so a user generates a config
+  from their own install on first run — nothing of Keen's is redistributed, and no bundled config
+  can be stale on arrival.
 - **Users regenerate on their own schedule.** Patch day: click Rebuild, producer runs, new JSON.
   No app update needed for a retune.
 - **Web host becomes possible** (§9). The consumer is pure computation over a data file, so it can
@@ -220,7 +221,7 @@ Who gets a config, and how:
 |---|---|
 | **Power users / self-hosters** | Run `tc extract` against their own install |
 | **Web users** | The server already hosts one; they never think about it |
-| **Desktop binary users** | Bundled into the release artifact at packaging time |
+| **Desktop binary users** | Generated on first run by the `tc.exe` bundled beside the app |
 
 The three paths converge on the same file, produced by the same tool.
 
@@ -494,6 +495,30 @@ manual: on patch day, run `tc dump-schemas` and diff against the previous output
 for the invariant checks (§7). Budget for that as a routine maintenance action rather than hoping CI
 will catch it.
 
+### 7.1.2 The pipelines
+
+`.github/workflows/ci.yml` and `.gitlab-ci.yml` run the same three things:
+
+| Job | Where | Why |
+|---|---|---|
+| **Test** | Linux | `Model`, `Core`, `Extraction` and `Gui` tests. All plain `net9.0` and need no game — which is the producer/consumer split paying out (§1) |
+| **Build all** | Windows | `Engine` and `Cli` are `net9.0-windows`, so *nothing* on Linux compiles them. Without this job they rot unnoticed until someone runs `tc` by hand |
+| **No game data** | Linux | `scripts/check-no-game-data.sh` |
+
+Two details that are easy to get wrong:
+
+- **Test individual projects, not the solution.** `dotnet test` on `ThrusterCalculatorSE2.slnx`
+  fails on Linux, because restoring it pulls in the two Windows-targeted projects.
+- **The data guard is a script, not YAML.** Both pipelines call the same file, so the check that
+  actually matters cannot drift between them — and it can be run locally before committing.
+
+`.gitignore` is advisory: `git add -f`, a well-meaning rule edit, or a tool writing into a tracked
+directory all bypass it silently. The script is the part that fails loudly, and it is verified to
+fail — not merely to pass — against a committed `gamedata.json` and a stray `.def`.
+
+GitLab's Windows build is opt-in (`RUN_WINDOWS_BUILD`), because shared Windows runners are not
+available on every gitlab.com plan and a job that can never be scheduled would fail every pipeline.
+
 ### 7.2 Tolerant parsing is a hard requirement
 
 Alpha game, 17 172 files, schemas stamped from a dozen builds in one install (Research §2.3):
@@ -755,8 +780,9 @@ stop depending on how thorough a manual grep happened to be. It earned its keep 
   Tests run on **synthetic** fixtures, deliberately named so they can't be confused with real data
   (§7.1).
 - **Three distribution paths** (§3.4): web users get a server-hosted config, desktop binary users get
-  one bundled at packaging time, power users run `tc extract`. **Releases need a manual extraction
-  step** on a machine with the game — CI builds code, never data (§3.5).
+  one generated on first run by the bundled `tc.exe`, power users run `tc extract`. **Releases ship
+  no `gamedata.json` at all**, which is what makes packaging fully automatable — CI builds code,
+  never data (§3.5).
 - **The desktop GUI keeps a thin rebuild affordance** that shells out to `tc.exe` (Design §4.5.1) —
   desktop-only, absent from the web build, degrading to an explanation rather than a dead button.
 - **No wiki cross-check command.** Hand-maintained, slow to update, demonstrably error-prone

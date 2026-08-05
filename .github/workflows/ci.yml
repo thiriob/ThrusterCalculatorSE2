@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+jobs:
+  # The consumer half plus Extraction are plain net9.0 and need no game installed, which is the
+  # whole point of the producer/consumer split (Technic.md §1). They test anywhere.
+  test:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      # Projects, not the solution: Engine and Cli target net9.0-windows and cannot restore here.
+      - name: Test
+        run: |
+          for project in Model Core Extraction Gui; do
+            dotnet test "src/ThrusterCalculator.$project.Tests/ThrusterCalculator.$project.Tests.csproj" \
+              --configuration Release
+          done
+
+  # Engine and Cli are Windows-only, so nothing above compiles them. Without this they rot
+  # unnoticed until someone runs `tc` by hand.
+  build-windows:
+    name: Build all (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Build solution
+        run: dotnet build src/ThrusterCalculatorSE2.slnx --configuration Release
+
+  # The repo must never contain anything derived from Space Engineers 2 (Technic.md §7.1).
+  # .gitignore is advisory; this is the part that fails loudly.
+  no-game-data:
+    name: No game data committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh scripts/check-no-game-data.sh

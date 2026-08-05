@@ -118,6 +118,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public bool IsSampleData => Origin == ConfigOrigin.Sample;
 
+    /// <summary>
+    /// How to replace the sample data with real numbers.
+    /// </summary>
+    /// <remarks>
+    /// A release ships no config on purpose, so this banner is the *normal* first-run state rather
+    /// than an error — which makes the instruction the most important text in the window. It has to
+    /// name the affordance that actually exists: telling someone to run a CLI while a Rebuild
+    /// button sits at the bottom of the same window is a needless detour.
+    /// </remarks>
+    public string SampleDataAdvice => CanRebuild
+        ? "Click Rebuild below to read your installed game, then restart."
+        : $"Run 'tc extract --out {ConfigSource.FileName}' and put the result beside the app.";
+
     // ── data panel (Design §4.5.1) ────────────────────────────────────────────────────────────
 
     /// <summary>Whether a rebuild is possible at all: desktop build, producer bundled.</summary>

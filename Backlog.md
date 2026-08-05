@@ -119,6 +119,28 @@ The instinct that caught it was a principle, not evidence: reading the HUD is no
 a tool whose premise is that the game files are the source of truth. That was right, and the data
 agreed.
 
+### B15 — Underwater thrusters are absent, not greyed out
+
+**Status:** deliberately deferred until the water milestone ships.
+
+Design §4.4 says not-yet-implemented content should be *shown greyed* — "does this exist yet?" is a
+real question in alpha — and Schema §4.4 specifies `implemented: false` for exactly that. The
+synthetic fixture exercises it; **real extraction emits nothing.** `Blocks\Thrusters\Underwater\
+{50,150,250,750}\` holds models and materials but **zero `.def` files**, so the producer never sees
+a block to emit.
+
+Implementing it would mean inferring blocks from art folders — inventing catalogue entries from the
+absence of data, which is the opposite of how everything else here works.
+
+**Revisit when:** water ships (VS3, the Byblos milestone). The thrusters will then have definitions
+and appear on their own with no code change. The one piece already in place is
+`ThrustClassesConfiguration`'s `Water` class, `WaterOnly: true`, which `ThrusterSizer` already
+rejects as producing no thrust while submersion is unmodelled.
+
+**Consequence today:** the catalogue shows 12 thrusters and the four underwater sizes are simply not
+listed. Honest — they do not exist in this build in any usable sense — but it is a stated design
+behaviour that is not live, so it is recorded here rather than left to be rediscovered.
+
 ## Modelling assumptions not yet verified in game
 
 ### B6 — Both effectiveness ramps are assumed linear
@@ -190,25 +212,54 @@ where the thrusters actually point — `ThrusterDefinition.ThrustDirection` exis
 
 ## Housekeeping
 
-### B12a — `tc.exe` is not bundled beside the desktop app
+### B12a — `tc.exe` is not beside the GUI in a *dev* build
 
-**Status:** the Data panel exists and works, but `ProducerProcess` finds no `tc.exe` next to the GUI,
-so Rebuild and the staleness check are both unavailable in a dev build. The UI says so and names the
-command to run by hand — a degradation, not a dead button (Design §4.5.1).
+**Status:** resolved for releases, still true when running from `bin/Debug`.
 
-Bundling is more than a `ProjectReference`: `ReferenceOutputAssembly="false"` fixes build order but
-copies nothing, and `Cli` drags in `Engine` plus the game-hosting stack. That is a packaging step
-(B12), not a project reference, which is why it has not been bolted on.
+The release workflow publishes the GUI and the CLI into one folder, so Rebuild and the staleness
+check work in a packaged build. A dev build has them in separate `bin` directories, so the Data
+panel explains itself and names the command instead — a degradation, not a dead button
+(Design §4.5.1).
 
-**Consequence today:** on a dev build the panel explains itself instead of working. Once B12's
-packaging exists, it starts working with no code change.
+Wiring it for dev would mean a post-build copy of the whole `Cli` output into the GUI's, dragging
+`Engine` and the game-hosting stack along on every incremental build. Not worth it to save one
+`tc extract` during development.
 
-### B12 — Release packaging needs a manual step
+### B12 — ~~Release packaging needs a manual step~~ RESOLVED: fully automated
 
-CI builds code but cannot build data: no runner has Space Engineers installed. Packaging a desktop
-release therefore needs `tc extract` run on a machine with the game (Technic §3.5). Option 2 there —
-the binary fetching its config from the same host that serves the web build — becomes attractive the
-moment a host exists.
+**Closed.** `.github/workflows/release.yml` builds the whole release on a tag, with no step on a
+machine that has the game.
+
+That was possible only by **dropping the bundled `gamedata.json`**. The earlier plan shipped one,
+which forced a manual `tc extract` — and, less comfortably, meant redistributing Keen's numbers,
+which `License.md` says this project does not do. The release now ships `tc.exe` instead of the data
+it would produce: first run shows the sample banner, one click on Rebuild generates a config from
+the user's own install.
+
+Better on three counts, not just convenience: nothing manual, nothing redistributed, and no config
+that is stale the day Keen patches.
+
+**Decided: a self-contained portable zip**, not an installer.
+
+Why portable suits *this* app specifically: it is not one binary but a GUI, a CLI and a config the
+user is explicitly invited to regenerate, so a visible folder containing all three is an asset
+rather than clutter — and the audience already navigates Steam library folders. Uninstalling is
+deleting the folder; settings live in `%LocalAppData%` and orphan nothing. An installer would also
+make code signing effectively mandatory, since an unsigned installer reads as malware to SmartScreen
+far more loudly than an unsigned zip does.
+
+Self-contained over framework-dependent: ~70–150 MB against ~10 MB, which is nothing beside the game
+itself, and "install a runtime first" loses people.
+
+**Two frictions to document in the release notes:**
+
+- **Mark-of-the-Web.** A downloaded zip marks its contents blocked; users may need right-click →
+  Properties → Unblock on the archive *before* extracting.
+- **SmartScreen** still warns on first run of an unsigned executable. Signing is the only real fix
+  and costs money annually.
+
+**Revisit an installer** when releases are frequent enough that people miss updates. Velopack
+(`vpk`) is the natural route — per-user install, no UAC, auto-update — and does not solve signing.
 
 ### B13 — One hand-maintained table remains, deliberately
 
