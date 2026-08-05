@@ -29,6 +29,7 @@ The game files had it right. That's the whole premise.
 | **[Technic.md](Technic.md)** | Architecture. The producer/consumer split, project layout, the sizing math, testing strategy. |
 | **[Schema.md](Schema.md)** | The `gamedata.json` contract — the interface between the two halves. Stands alone. |
 | **[Backlog.md](Backlog.md)** | Deferred decisions and known gaps, each with enough context to pick up cold. |
+| **[Roadmap.md](Roadmap.md)** | What v2 and v3 are for, and what is waiting on the game rather than on us. |
 
 ## How it's put together
 

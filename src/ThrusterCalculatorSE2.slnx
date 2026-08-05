@@ -5,9 +5,17 @@
     <File Path="../Design.md" />
     <File Path="../Technic.md" />
     <File Path="../Schema.md" />
+    <File Path="../Backlog.md" />
+    <File Path="../Roadmap.md" />
+    <File Path="../License.md" />
   </Folder>
-  <Folder Name="/fixtures/">
-    <File Path="../tests/fixtures/synthetic-gamedata.json" />
+  <Folder Name="/build/">
+    <File Path="Directory.Build.props" />
+    <File Path="../.github/workflows/ci.yml" />
+    <File Path="../.github/workflows/release.yml" />
+    <File Path="../.github/release-notes.md" />
+    <File Path="../.gitlab-ci.yml" />
+    <File Path="../scripts/check-no-game-data.sh" />
   </Folder>
   <Project Path="ThrusterCalculator.Model/ThrusterCalculator.Model.csproj" />
   <Project Path="ThrusterCalculator.Model.Tests/ThrusterCalculator.Model.Tests.csproj" />
