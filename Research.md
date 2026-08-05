@@ -656,8 +656,9 @@ extracted as unknown rather than assumed, and deferred until the planet ships (B
 
 ### 4.5 Which planets actually matter
 
-Only **Verdure** and **Kemik** are reachable in the current build; the other eight ship as data but
-are not playable.
+**Verdure, Kemik, Palatine and Caligo** are reachable in the current build; the other six ship as
+data but are not playable. (An earlier draft said only Verdure and Kemik — corrected from in-game
+observation; either the roster grew or the first count was wrong.)
 
 An earlier draft noted that both playable planets were among those whose atmosphere geometry we could
 not read — which made the gap matter far more than a count of 8-of-10 suggested. **§4.4.2 closed
@@ -726,7 +727,53 @@ This is a real find:
 
 These are **multipliers of planet radius**, all dimensionless.
 
-### 5.3 What's still missing: radius, and therefore surface gravity
+### 5.3 SOLVED — surface gravity is in the definitions after all
+
+> **This section's original conclusion was wrong.** It is kept below, struck through, because *how*
+> it was wrong is the useful part. The corrected finding comes first.
+
+**`GravityGeneratorObjectBuilder` states surface gravity outright**, and carries the whole falloff
+model beside it:
+
+```json
+{ "$Type": "…RangedAffectGenerators.Gravity.GravityGeneratorObjectBuilder",
+  "GravitationalAcceleration": 9.80665,   // m/s² at the surface
+  "AccelerationDistance": 1.05,           // constant out to here
+  "AffectDistance": 1.35,                 // zero beyond here
+  "FallOffPower": -1,                     // exponent; -1 sentinel, as in thrust classes
+  "GravityShape": "Spherical" }
+```
+
+All ten planets now extract as `measured`:
+
+| Planet | m/s² | g | | Planet | m/s² | g |
+|---|---:|---:|---|---|---:|---:|
+| Verdure | 9.80665 | 1.000 | | Caligo | 4.09 | 0.417 |
+| Kemik | 9.80665 | 1.000 | | Palatine | 3.27 | 0.333 |
+| EarthLike, Byblos, Geomeles, MarsLike, Testerran, WaterPlanet | 9.80665 | 1.000 | | | | |
+
+**Independently confirmed in game:** Verdure's HUD reads exactly `G: 1.00 g` on the surface, against
+the file's 9.80665 m/s² = 1.000 g (§5.3.1). Two unrelated routes, same answer.
+
+#### Why it looked absent for so long — two compounding mistakes
+
+1. **The reader took one field off a component and ignored the rest.** `ReadPlanetGeometry` pulled
+   `AffectDistance` from the gravity generator and never looked at `GravitationalAcceleration`
+   sitting next to it. A grep for `Gravity` in the planet folders "confirmed" the absence, because
+   the files that *do* state it — Caligo and Palatine — were never printed in full.
+2. **`_entity.ObjectBuilders` has two encodings, and we handled one.** A planet's own prefab
+   delta-encodes its components (`{ "$DeltaEncoded": true, "Changed": [...] }`); the legacy base
+   templates list them as a **plain array**. Verdure and Kemik inherit gravity from
+   `Templates/Legacy/PlanetWithoutAtmosphere`, so the walk reached the right file and then read
+   nothing out of it. `BlockCompositionIndex.ReadComponentGuids` had already learned to handle both
+   shapes — the same lesson, missed a second time.
+
+**The rule this earns:** when a component is found, dump the *whole* payload before concluding a
+field is absent, and never assume one container encoding. `tc planet <name>` exists for exactly
+this — it walks the chain and prints every gravity and atmosphere payload it meets, so "where did
+the walk stop?" is answerable without guessing.
+
+### 5.3.0 ~~What's still missing: radius, and therefore surface gravity~~ (superseded)
 
 Neither surface gravity nor planet radius appears in any `.def`. Checked:
 `PlanetGeneratorDefinitionObjectBuilder` (heightmaps, `HillParams`, `MaxAltimeter`, `IsMoon` — no
@@ -738,19 +785,50 @@ same generator can be instantiated at different sizes. It lives in the world sav
 gravity is then presumably derived from radius by the engine.
 
 **So, answering the question directly:** your instinct was right that planets carry their own data,
-and it's better than I first reported — the gravity/atmosphere **field shape** is per-planet,
-per-milestone, in readable JSON, and a custom or modded planet shipping its own `.def` files **would
-be picked up automatically** by a GUID-index-based reader. That extensibility works.
+and the gravity/atmosphere **field shape** is per-planet, per-milestone, in readable JSON, so a
+custom or modded planet shipping its own `.def` files **is picked up automatically** by a
+GUID-index-based reader. That extensibility works.
 
-But the **surface gravity magnitude** is not there. Practical plan:
+~~But the **surface gravity magnitude** is not there~~ — **it is** (§5.3). What survives from the
+plan below is only point 3:
 
-1. Read `AffectDistance` / `ConstantAffectDistance` per planet from `.def` — real, live, extensible.
-2. Ship a **curated, user-editable gravity magnitude table** keyed by planet name, marked `Assumed`.
-3. Auto-discover *new* planets from the `.def` scan; if one appears with no gravity entry, show it
-   with an empty, editable gravity field rather than hiding it. That way a new Keen planet or a
-   player's custom planet appears the day it ships, needing one number from the user.
+1. ~~Read `AffectDistance` / `ConstantAffectDistance` per planet~~ — done, plus the magnitude.
+2. ~~Ship a curated, user-editable gravity table marked `Assumed`~~ — **abandoned.** One was
+   briefly built and then deleted: a hand-maintained table of numbers the files already state is a
+   second source of truth that drifts, and it violates the project's first principle. The
+   measurement that "justified" it turned out to be verification of a value we could extract.
+3. **Auto-discover new planets from the scan**, and where one genuinely resolves nothing, show it
+   with an editable field rather than hiding it. Still right, and now the rare case rather than the
+   norm.
 
-That gets the extensibility benefit without blocking on `.vrb`.
+A **user override** remains, because a world can spawn a planet at a size of its own choosing — but
+it is off by default and the extracted value is what shows.
+
+### 5.3.1 Measured in game — and what the HUD tells us
+
+The HUD reports gravity bottom-right as `G:` (natural) and `A:` (artificial, from gravity
+generator blocks — `0.00` on a ship carrying none). Standing on **Verdure**:
+
+| Where | `G:` |
+|---|---:|
+| On the ground | **1.00 g** |
+| At the boundary of space | 0.33 g |
+| Well into space | 0.00 g |
+
+**The surface reading is the one that settles anything.** Verdure is exactly 1.00 g = 9.81 m/s², on
+a default-sized world, and it is now the first entry in `Core.CuratedPlanetGravity`. That table is
+the concrete form of point 2 above.
+
+The other two readings are suggestive but **not usable yet**, because the altitude they were taken
+at is not known precisely. For the record, if "boundary of space" is the atmosphere edge at 1.15 R,
+then an SE1-style falloff `g = g₀·(R/r)ⁿ` fits at n ≈ 7–8 — `(1/1.15)⁷ = 0.376`,
+`(1/1.15)⁸ = 0.327` against the observed 0.33. **Do not build on that**: one reading at an
+unmeasured altitude, quoted to two decimals, cannot distinguish those exponents from each other or
+from a different model entirely. It is a lead for Backlog B7, not a result.
+
+Note this also means gravity falls off much faster than the inverse square of a point mass would
+suggest — `(1/1.15)² = 0.756`, more than double what was observed — so a "just use Newton" model
+would be badly wrong well before the gravity well ends at 1.5 R.
 
 ### 5.4 If we ever do want `.vrb`
 

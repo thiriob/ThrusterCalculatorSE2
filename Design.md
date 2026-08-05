@@ -104,6 +104,29 @@ For each thruster type available in the current game build, propose a configurat
 requirement. One row per type, so the trade-off (count, added mass, power/fuel draw) is directly
 comparable.
 
+### 3.3.1 The results panel is a table, grouped — not tabs
+
+Twelve types is a lot of rows, and the first version rendered each as a card of inline text runs.
+Nothing lined up, so there were no columns for the eye to follow and the panel read as a wall.
+
+**Fixed by alignment, not by hiding.** Real right-aligned numeric columns with tabular figures, rows
+grouped under a family heading (Atmospheric / Hydrogen / Ion), families ordered so the cheapest
+option overall is the first row on screen, and sizes ascending within a family so "one size up" is
+the adjacent row.
+
+**Tabs by family were considered and rejected.** They would cut the row count on screen, but the
+panel's entire job is weighing an atmospheric loadout against a hydrogen one — and a tab strip puts
+two thirds of the options behind a click, leaving you comparing against memory. That is the same
+reason §3.2 shows all three load presets at once.
+
+Two things are folded rather than dropped:
+
+- **Unusable loadouts collapse into one line** — *"4 not usable here — no thrust in this
+  atmosphere"* — expandable. On an atmospheric world "the ion family is dead here" is among the most
+  useful things the panel says (§4.4); it just does not need a row each to say it.
+- **Headroom moves to the row's tooltip.** It is derivable from the covered range, and the table
+  earns its readability by carrying only what you actually choose between.
+
 **Long term: mixed compositions** — e.g. atmospheric for lift-off plus ion for orbit. Deferred, but
 the core must be designed so a mixed solver is an added function, not a rewrite (Technic §4).
 
@@ -119,8 +142,8 @@ You cannot fit half a thruster. Rounding up to a whole number means the configur
 each proposal is honest about the band of ship mass it actually supports:
 
 ```
-18 × Atmospheric 2.5 m     supports 500 t – 518 t     (at TWR 1.0, Verdure)
-                           ▲ your ship: 500 t — 3.6% headroom
+18 × Atmospheric 2.5 m     covers 500,000 – 518,559 kg     (at TWR 1.0, Verdure)
+                           ▲ your ship: 500,000 kg — 3.6% headroom
 ```
 
 Showing the upper bound tells you how much you can grow before re-planning — genuinely useful, and
@@ -212,10 +235,43 @@ current config's game build and staleness, plus a button that shells out. Keep i
 The config is **plain, hand-editable JSON**. Where the app shows an `Assumed` value, the user can fix
 it inline in the UI or directly in the file — the same value, one source of truth.
 
+### 4.5.2 Settings persist, in a file you can read
+
+`%LocalAppData%\ThrusterCalculatorSE2\settings.ini` — plain INI with comments, the same shape as the
+sibling project's. It remembers the departure planet, its gravity, and the target TWR.
+
+Three rules, each load-bearing:
+
+- **Self-creating.** Missing on launch, or missing a key, and it is written out complete. The file
+  documents itself rather than growing silently as features are added.
+- **Saved on clean exit only.** A crash leaves the previous known-good file intact rather than
+  persisting whatever state caused it.
+- **An implausible value is treated as absent.** A hand-edited `Gravity = 0` would make the
+  requirement zero and every loadout trivially feasible — a wrong answer that looks like a working
+  app. Out-of-range values fall back to the default instead.
+
+**Saved gravity applies only when its planet came back.** Gravity is a per-planet number the user
+supplies (§4.5 / Research §5.3), so carrying it onto a *different* planet would be wrong — and on a
+first run the stored default would otherwise overwrite whatever the selected planet actually states.
+
 ### 4.6 Units
 
-Display kN / t / m·s⁻² / g; compute in SI base units (N, kg). Raw thrust runs to 15 465 370 —
-unreadable. TWR shown as a plain multiplier ("1.4×"), because that's how players talk.
+**Masses are kilograms, everywhere, in and out.** This reverses an earlier decision to display
+tonnes, and the reason is the one that should have decided it first: **the game shows the player a
+mass in kilograms**, bottom-right on the HUD. That number is the input, so asking for tonnes made the
+player divide by a thousand before typing — and a slipped factor of a thousand is a silent, entirely
+plausible-looking wrong answer that nothing downstream can catch.
+
+Mixing them is worse than either: kilograms in and tonnes out means converting in your head to check
+whether a result is sane, which is exactly the moment the slip goes unnoticed. So ship mass, hull
+mass, cargo capacity, added thruster mass and the supported range are all kilograms with thousand
+separators.
+
+Thrust stays **kN** — raw thrust runs to 15 465 370 N, which is unreadable, and no in-game figure
+competes with it. Gravity is m·s⁻². TWR is a plain multiplier ("1.4×"), because that's how players
+talk. Resource draw carries its own units from the config (**kW** for electricity, **L/s** for
+hydrogen) — they are not comparable across classes, so an unlabelled number would invite exactly
+that comparison (Research §3).
 
 ---
 
@@ -233,17 +289,17 @@ Single window, live recompute — not a wizard.
 │  TWR     [ 1.0  ]           │     full     5 300 kN                            │
 │  ─────────────────────────  │                                                  │
 │  SHIP MASS                  │   CONFIGURATIONS  (full load)                    │
-│  ( ) I know it:  [    ] t   │   ┌──────────────────────────────────────────┐   │
-│  (•) Work it out            │   │ Atmospheric 2.5 m   19 ×   +8.8 t  12 MW │   │
-│      Hull      [ 300 ] t ⚠  │   │   supports 528–546 t · 3.4% headroom     │   │
-│      Cargo 250 [   4 ]      │   │ Atmospheric 5 m      4 ×   +6.2 t  10 MW │   │
-│      Cargo 750 [   0 ]      │   │   supports 512–589 t · 12% headroom      │   │
-│      H2 Tank 500 [ 2 ]      │   │ Hydrogen 2.5 m       3 ×   +3.0 t  36 H2 │   │
-│  ─────────────────────────  │   │   supports 501–581 t · 14% headroom      │   │
-│  Dry    300 t               │   │ Ion 1.5 m          ✕ no thrust in atmo    │   │
-│  Cargo  269 t (full)        │   └──────────────────────────────────────────┘   │
-│  Tanks    2 t (blocks only) │                                                  │
-│  Total  571 t               │   ⓘ Assumes no thrusters currently installed.    │
+│  ( ) I know it: [       ]kg │   ┌──────────────────────────────────────────┐   │
+│  (•) Work it out            │   │ Atmospheric 2.5 m  19 × +8,816 kg  12 MW │   │
+│      Hull   [300,000] kg ⚠  │   │   covers 528,000–546,000 kg · 3.4% head  │   │
+│      Cargo 250 [   4 ]      │   │ Atmospheric 5 m     4 × +6,207 kg  10 MW │   │
+│      Cargo 750 [   0 ]      │   │   covers 512,000–589,000 kg · 12% head   │   │
+│      H2 Tank 500 [ 2 ]      │   │ Hydrogen 2.5 m      3 × +3,015 kg 36 L/s │   │
+│  ─────────────────────────  │   │   covers 501,000–581,000 kg · 14% head   │   │
+│  Dry      300,000 kg        │   │ Ion 1.5 m          ✕ no thrust in atmo    │   │
+│  Cargo    268,800 kg (full) │   └──────────────────────────────────────────┘   │
+│  Tanks      2,000 kg (block)│                                                  │
+│  Total    570,800 kg        │   ⓘ Assumes no thrusters currently installed.    │
 │                             │   ⚠ = Assumed value — click to edit              │
 ├─────────────────────────────┴─────────────────────────────────────────────────┤
 │ Game data: build 2.3.0.2798 · 17,172 defs · read 14:22 · [Rebuild]            │

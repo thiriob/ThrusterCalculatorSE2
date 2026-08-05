@@ -17,9 +17,17 @@ public partial class App : Application
         {
             // Composition root: the only place the GUI touches config loading. Everything below
             // this line sees a GameData and nothing else — no files, no game, no producer types.
-            desktop.MainWindow = new MainWindow
+            var settings = AppSettings.Load();
+            var viewModel = new MainWindowViewModel(ConfigSource.Load(), settings);
+
+            desktop.MainWindow = new MainWindow { DataContext = viewModel };
+
+            // Only on a clean exit. A crash leaves the previous file intact rather than
+            // persisting whatever state caused it.
+            desktop.Exit += (_, _) =>
             {
-                DataContext = new MainWindowViewModel(ConfigSource.Load()),
+                viewModel.CaptureInto(settings);
+                settings.Save();
             };
         }
 

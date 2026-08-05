@@ -3,28 +3,61 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="using:ThrusterCalculator.Gui.ViewModels"
-        mc:Ignorable="d" d:DesignWidth="1040" d:DesignHeight="700"
+        xmlns:c="using:ThrusterCalculator.Gui.Controls"
+        mc:Ignorable="d" d:DesignWidth="1140" d:DesignHeight="760"
         x:Class="ThrusterCalculator.Gui.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="ThrusterCalculator SE2"
-        Width="1040" Height="720"
-        MinWidth="880" MinHeight="560">
+        Width="1140" Height="780"
+        MinWidth="960" MinHeight="600"
+        FontSize="14">
 
     <Window.Styles>
+        <!-- Sizes are set relative to the window's 14px base rather than left to the theme
+             defaults, which assume a scaled display; at 100% Windows scaling they read small. -->
         <Style Selector="TextBlock.h">
+            <Setter Property="FontSize" Value="13" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Opacity" Value="0.75" />
             <Setter Property="Margin" Value="0,12,0,4" />
         </Style>
         <Style Selector="TextBlock.dim">
             <Setter Property="Opacity" Value="0.65" />
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+
+        <!-- Applied conditionally, to show a value is present but not in force. -->
+        <Style Selector="TextBlock.muted">
+            <Setter Property="Opacity" Value="0.35" />
         </Style>
         <Style Selector="Border.card">
             <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundListLowBrush}" />
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="Padding" Value="12" />
             <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+
+        <!-- Results table. Numeric columns are right-aligned and tabular so digits line up
+             vertically; that alignment is what makes the panel scannable at all. -->
+        <Style Selector="TextBlock.col">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Opacity" Value="0.55" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="VerticalAlignment" Value="Bottom" />
+        </Style>
+        <Style Selector="TextBlock.cell">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.num">
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="FontFeatures" Value="tnum" />
+        </Style>
+        <Style Selector="TextBlock.family">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Opacity" Value="0.8" />
+            <Setter Property="Margin" Value="0,6,0,3" />
         </Style>
     </Window.Styles>
 
@@ -53,50 +86,88 @@
 
                     <TextBlock Classes="h" Text="DEPARTURE" Margin="0,0,0,4" />
                     <Border Classes="card">
+                        <!-- One label column width across all three rows, so the fields line up
+                             instead of each starting wherever its own label happens to end. -->
                         <StackPanel Spacing="8">
-                            <ComboBox ItemsSource="{Binding Planets}"
-                                      SelectedItem="{Binding SelectedPlanet}"
-                                      HorizontalAlignment="Stretch" />
-                            <Grid ColumnDefinitions="Auto,*,Auto">
-                                <TextBlock Grid.Column="0" Text="Gravity" VerticalAlignment="Center" />
+                            <TextBlock Classes="h" Text="GRAVITY" Margin="0,0,0,2" />
+                            <Grid ColumnDefinitions="78,*,Auto">
+                                <TextBlock Grid.Column="0" Text="Planet" VerticalAlignment="Center" />
+                                <ComboBox Grid.Column="1" Grid.ColumnSpan="2" Margin="8,0,0,0"
+                                          ItemsSource="{Binding Planets}"
+                                          SelectedItem="{Binding SelectedPlanet}"
+                                          HorizontalAlignment="Stretch" />
+                            </Grid>
+                            <!-- The gravity actually in force, shown as a figure rather than in
+                                 the entry box. Binding the only visible field to the override made
+                                 selecting a planet change the maths without changing anything on
+                                 screen, which reads as a bug. -->
+                            <!-- The planet's own gravity, dimmed while the override is in force.
+                                 Exactly one of this and the custom field below is live at a time,
+                                 so which number is being used is readable at a glance. -->
+                            <Grid ColumnDefinitions="78,*">
+                                <TextBlock Grid.Column="0" Text="Gravity" VerticalAlignment="Center"
+                                           Classes.muted="{Binding GravityIsCustom}" />
+                                <TextBlock Grid.Column="1" Margin="8,0,0,0" FontSize="16"
+                                           VerticalAlignment="Center"
+                                           Classes.muted="{Binding GravityIsCustom}"
+                                           Text="{Binding GravityText}" />
+                            </Grid>
+
+                            <TextBlock Classes="dim" TextWrapping="Wrap"
+                                       Text="{Binding GravityNote}" />
+
+                            <!-- Forced on, and locked, when the planet states no gravity of its
+                                 own: there is nothing to fall back to. -->
+                            <CheckBox Content="Use a custom gravity" Margin="0,4,0,0"
+                                      IsChecked="{Binding GravityIsCustom, Mode=TwoWay}"
+                                      IsEnabled="{Binding CanUsePlanetGravity}" />
+
+                            <Grid ColumnDefinitions="78,*,Auto" Margin="0,0,0,6">
                                 <NumericUpDown Grid.Column="1" Margin="8,0"
-                                               Value="{Binding Gravity}"
-                                               Minimum="0" Maximum="100" Increment="0.1"
+                                               Value="{Binding CustomGravity}"
+                                               IsEnabled="{Binding GravityIsCustom}"
+                                               Minimum="0.1" Maximum="100" Increment="0.1"
                                                FormatString="0.00" />
                                 <TextBlock Grid.Column="2" Text="m/s²" VerticalAlignment="Center" />
                             </Grid>
-                            <TextBlock Classes="dim" IsVisible="{Binding GravityIsAssumed}"
-                                       TextWrapping="Wrap"
-                                       Text="⚠ Assumed — surface gravity is not in the game's definition files. Edit if you know better." />
-                            <Grid ColumnDefinitions="Auto,*">
+
+                            <!-- Gravity and TWR are unrelated inputs; without a break they read as
+                                 one block of numbers. -->
+                            <Separator Margin="0,2,0,6" />
+
+                            <TextBlock Classes="h" Text="THRUST TARGET" Margin="0,0,0,2" />
+                            <Grid ColumnDefinitions="78,*,Auto">
                                 <TextBlock Grid.Column="0" Text="Target TWR" VerticalAlignment="Center" />
-                                <NumericUpDown Grid.Column="1" Margin="8,0,0,0"
+                                <NumericUpDown Grid.Column="1" Grid.ColumnSpan="2" Margin="8,0,0,0"
                                                Value="{Binding TargetThrustToWeight}"
                                                Minimum="0.1" Maximum="20" Increment="0.1"
                                                FormatString="0.0" />
                             </Grid>
+                            <TextBlock Classes="dim" TextWrapping="Wrap"
+                                       Text="Thrust ÷ weight. 1.0 hovers, 1.5 lifts off comfortably." />
                         </StackPanel>
                     </Border>
 
                     <TextBlock Classes="h" Text="SHIP MASS" />
                     <Border Classes="card">
                         <StackPanel Spacing="8">
+                            <!-- Each option binds two-way to its own settable property. A negated
+                                 binding cannot write back, which left this group unclickable. -->
                             <RadioButton GroupName="mass" Content="I know it"
-                                         IsChecked="{Binding !IsStorageMode}" />
-                            <NumericUpDown Value="{Binding DirectMassTonnes}" Minimum="0"
-                                           Increment="10" FormatString="0.#"
-                                           IsEnabled="{Binding !IsStorageMode}" />
-                            <TextBlock Classes="dim" Text="tonnes, as shown in game" />
+                                         IsChecked="{Binding IsDirectMode, Mode=TwoWay}" />
+                            <c:MassInput Value="{Binding DirectMassKg}"
+                                         IsEnabled="{Binding IsDirectMode}" />
+                            <TextBlock Classes="dim" Text="kilograms, as shown in game" />
 
                             <RadioButton GroupName="mass" Content="Work it out from storage"
-                                         IsChecked="{Binding IsStorageMode}" Margin="0,8,0,0" />
+                                         IsChecked="{Binding IsStorageMode, Mode=TwoWay}" Margin="0,8,0,0" />
                             <StackPanel IsEnabled="{Binding IsStorageMode}" Spacing="6">
                                 <Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Grid.Column="0" Text="Hull" VerticalAlignment="Center" />
-                                    <NumericUpDown Grid.Column="1" Margin="8,0,0,0"
-                                                   Value="{Binding HullMassTonnes}" Minimum="0"
-                                                   Increment="10" FormatString="0.#" />
+                                    <c:MassInput Grid.Column="1" Margin="8,0,0,0"
+                                                 Value="{Binding HullMassKg}" />
                                 </Grid>
+                                <TextBlock Classes="dim" Text="kilograms, excluding cargo and thrusters" />
 
                                 <ItemsControl ItemsSource="{Binding Containers}">
                                     <ItemsControl.ItemTemplate>
@@ -183,49 +254,77 @@
                     </Border>
 
                     <TextBlock Classes="h" Text="CONFIGURATIONS" />
+
+                    <!-- Column header. Widths are repeated verbatim in the row template below;
+                         they must stay in step or the table stops being a table. -->
+                    <Grid ColumnDefinitions="*,52,104,58,124,88" Margin="12,0,12,4">
+                        <TextBlock Grid.Column="1" Classes="col" Text="COUNT" />
+                        <TextBlock Grid.Column="2" Classes="col" Text="ADDED MASS" />
+                        <TextBlock Grid.Column="3" Classes="col" Text="TWR" />
+                        <TextBlock Grid.Column="4" Classes="col" Text="COVERS UP TO" />
+                        <TextBlock Grid.Column="5" Classes="col" Text="DRAW" />
+                    </Grid>
                 </StackPanel>
 
                 <TextBlock DockPanel.Dock="Bottom" Classes="dim" Margin="0,8,0,0"
                            Text="{Binding Assumption}" />
 
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding Results}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:ThrusterResultViewModel">
-                                <Border Classes="card" Margin="0,0,0,6">
-                                    <!-- Single column on purpose. A right-docked figures panel was
-                                         tried twice and rendered off-screen inside the scroller;
-                                         inline also reads better, since the count is the answer. -->
-                                    <StackPanel Spacing="3">
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
-                                                   TextWrapping="Wrap" />
+                    <StackPanel>
 
-                                        <StackPanel Orientation="Horizontal" Spacing="14"
-                                                    IsVisible="{Binding IsFeasible}">
-                                            <TextBlock Text="{Binding CountText}" FontSize="19" />
-                                            <TextBlock Text="{Binding AddedMassText}" FontSize="15"
-                                                       VerticalAlignment="Center" Opacity="0.85" />
-                                            <TextBlock Text="{Binding RatioText}" FontSize="15"
-                                                       VerticalAlignment="Center" Opacity="0.85" />
-                                            <TextBlock Classes="dim" Text="{Binding ProvenanceText}"
-                                                       VerticalAlignment="Center"
-                                                       IsVisible="{Binding IsUncertain}" />
-                                        </StackPanel>
+                        <ItemsControl ItemsSource="{Binding Families}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ThrusterFamilyViewModel">
+                                    <StackPanel Margin="0,0,0,10">
+                                        <TextBlock Text="{Binding Name}" Classes="family" />
 
-                                        <TextBlock Classes="dim" Text="{Binding StatusText}"
-                                                   IsVisible="{Binding !IsFeasible}" />
-
-                                        <StackPanel Orientation="Horizontal" Spacing="14"
-                                                    IsVisible="{Binding IsFeasible}">
-                                            <TextBlock Classes="dim" Text="{Binding RangeText}" />
-                                            <TextBlock Classes="dim" Text="{Binding HeadroomText}" />
-                                            <TextBlock Classes="dim" Text="{Binding DrawText}" />
-                                        </StackPanel>
+                                        <ItemsControl ItemsSource="{Binding Rows}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:ThrusterResultViewModel">
+                                                    <Grid ColumnDefinitions="*,52,104,58,124,88"
+                                                          Margin="12,0,12,0" Height="26"
+                                                          ToolTip.Tip="{Binding DetailText}">
+                                                        <TextBlock Grid.Column="0" Classes="cell"
+                                                                   Text="{Binding SizeText}"
+                                                                   HorizontalAlignment="Left" />
+                                                        <TextBlock Grid.Column="1" Classes="cell num"
+                                                                   Text="{Binding Count}" />
+                                                        <TextBlock Grid.Column="2" Classes="cell num"
+                                                                   Text="{Binding AddedMassText}" />
+                                                        <TextBlock Grid.Column="3" Classes="cell num"
+                                                                   Text="{Binding RatioText}" />
+                                                        <TextBlock Grid.Column="4" Classes="cell num"
+                                                                   Text="{Binding MaxSupportedText}" />
+                                                        <TextBlock Grid.Column="5" Classes="cell num"
+                                                                   Text="{Binding DrawText}" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
                                     </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- Collapsed, never hidden: "why can't I use this here?" is a real
+                             question during alpha, it just does not need eight rows to answer. -->
+                        <Expander IsVisible="{Binding HasUnusable}" Margin="0,4,0,0"
+                                  Header="{Binding UnusableSummary}">
+                            <ItemsControl ItemsSource="{Binding Unusable}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ThrusterResultViewModel">
+                                        <Grid ColumnDefinitions="180,*" Margin="0,1">
+                                            <TextBlock Grid.Column="0" Classes="cell"
+                                                       Text="{Binding Name}" />
+                                            <TextBlock Grid.Column="1" Classes="dim"
+                                                       VerticalAlignment="Center"
+                                                       Text="{Binding StatusText}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Expander>
+                    </StackPanel>
                 </ScrollViewer>
             </DockPanel>
         </Grid>

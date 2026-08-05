@@ -34,16 +34,32 @@ public sealed partial class MainWindowViewModel : ObservableObject
         [("Empty", 0.0), ("Half", 0.5), ("Full", 1.0)];
 
     [ObservableProperty] private PlanetOption? _selectedPlanet;
-    [ObservableProperty] private double _gravity = 9.81;
+
+    /// <summary>Whether the user has chosen to override the planet's stated gravity.</summary>
+    [ObservableProperty] private bool _useCustomGravity;
+
+    /// <summary>The override value, used only when it is in force.</summary>
+    [ObservableProperty] private double _customGravity = AppSettings.DefaultCustomGravity;
+
     [ObservableProperty] private double _targetThrustToWeight = 1.0;
     [ObservableProperty] private MassEntryMode _massEntryMode = MassEntryMode.Direct;
-    [ObservableProperty] private double _directMassTonnes = 500;
-    [ObservableProperty] private double _hullMassTonnes = 300;
+
+    // Kilograms, because that is the unit the game puts on screen. The player reads a number off the
+    // bottom-right of the HUD and types it in; asking for tonnes would make them divide first, and a
+    // slip of three orders of magnitude is a silent, plausible-looking wrong answer.
+    [ObservableProperty] private double _directMassKg = 500_000;
+    [ObservableProperty] private double _hullMassKg = 300_000;
     [ObservableProperty] private int _selectedPresetIndex = 2;
 
     public MainWindowViewModel(LoadedConfig config)
+        : this(config, new AppSettings())
+    {
+    }
+
+    public MainWindowViewModel(LoadedConfig config, AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(settings);
 
         _data = config.Data;
         _index = new GameDataIndex(_data);
@@ -62,8 +78,34 @@ public sealed partial class MainWindowViewModel : ObservableObject
             row.PropertyChanged += OnStorageChanged;
         }
 
-        SelectedPlanet = Planets.FirstOrDefault();
+        // Restore the remembered planet, falling back to the first — a planet can vanish between
+        // runs when the config is rebuilt, and that must not leave the app with nothing selected.
+        var remembered = Planets.FirstOrDefault(
+            p => string.Equals(p.Id, settings.SelectedPlanetId, StringComparison.Ordinal));
+
+        SelectedPlanet = remembered ?? Planets.FirstOrDefault();
+
+        // Only the override is restored, never a gravity we read from the config: a stored copy of
+        // an extracted value would go stale the moment the config is rebuilt, and would then
+        // quietly win over the newer number. The planet's own value is looked up every time.
+        CustomGravity = settings.CustomGravity;
+        UseCustomGravity = settings.UseCustomGravity;
+
+        // Ratio is planet-independent, so it always applies.
+        TargetThrustToWeight = settings.TargetThrustToWeight;
+
         Recalculate();
+    }
+
+    /// <summary>Copies the remembered state back out, for saving on a clean exit.</summary>
+    public void CaptureInto(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        settings.SelectedPlanetId = SelectedPlanet?.Id;
+        settings.UseCustomGravity = UseCustomGravity;
+        settings.CustomGravity = CustomGravity;
+        settings.TargetThrustToWeight = TargetThrustToWeight;
     }
 
     public ConfigOrigin Origin { get; }
@@ -82,7 +124,41 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public ObservableCollection<StorageRowViewModel> Tanks { get; }
 
+    /// <summary>Every sized thruster, flat. The families below are built from this.</summary>
     public ObservableCollection<ThrusterResultViewModel> Results { get; } = [];
+
+    /// <summary>Feasible loadouts, grouped by family — what the panel actually renders.</summary>
+    public ObservableCollection<ThrusterFamilyViewModel> Families { get; } = [];
+
+    /// <summary>The ones that cannot work here, folded away behind one line.</summary>
+    public ObservableCollection<ThrusterResultViewModel> Unusable { get; } = [];
+
+    public bool HasUnusable => Unusable.Count > 0;
+
+    /// <summary>
+    /// One line standing in for the whole unusable set.
+    /// </summary>
+    /// <remarks>
+    /// Collapsed, never hidden. "Does this exist yet, and why can't I use it?" is a real question in
+    /// alpha (Design.md §4.4), and on an atmospheric world the ion family being dead is the single
+    /// most useful thing the panel says — it just does not need eight rows to say it.
+    /// </remarks>
+    public string UnusableSummary
+    {
+        get
+        {
+            if (Unusable.Count == 0) return string.Empty;
+
+            var reasons = Unusable
+                .Select(r => r.StatusText)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            return reasons.Count == 1
+                ? $"{Unusable.Count} not usable here — {reasons[0]}"
+                : $"{Unusable.Count} not usable here";
+        }
+    }
 
     public ObservableCollection<LoadSummary> Loads { get; } = [];
 
@@ -90,7 +166,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty] private string _shipMassText = string.Empty;
     [ObservableProperty] private string _requirementText = string.Empty;
-    [ObservableProperty] private bool _gravityIsAssumed = true;
 
     /// <summary>
     /// Stated permanently rather than in a dismissible dialog: proposals assume the ship has no
@@ -98,27 +173,165 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// </summary>
     public string Assumption => "Assumes no thrusters are currently installed.";
 
-    public bool IsStorageMode => MassEntryMode == MassEntryMode.Storage;
+    /// <summary>
+    /// The two mass-entry radio buttons, as settable properties.
+    /// </summary>
+    /// <remarks>
+    /// These must have setters. An earlier version exposed only <c>IsStorageMode</c> as a computed
+    /// getter and bound the other button to <c>{Binding !IsStorageMode}</c> — so neither button
+    /// could write the mode back, and clicking "Work it out from storage" appeared to do nothing:
+    /// the section stayed disabled and focus stayed on the direct field. A radio group needs a
+    /// two-way target per option, and a negated binding is not one.
+    /// <para>
+    /// Setting to <c>false</c> is ignored on purpose. Radio buttons unset the outgoing option before
+    /// setting the incoming one, so honouring the <c>false</c> would flip the mode and immediately
+    /// flip it back.
+    /// </para>
+    /// </remarks>
+    public bool IsDirectMode
+    {
+        get => MassEntryMode == MassEntryMode.Direct;
+        set
+        {
+            if (value) MassEntryMode = MassEntryMode.Direct;
+        }
+    }
+
+    /// <inheritdoc cref="IsDirectMode"/>
+    public bool IsStorageMode
+    {
+        get => MassEntryMode == MassEntryMode.Storage;
+        set
+        {
+            if (value) MassEntryMode = MassEntryMode.Storage;
+        }
+    }
+
+    /// <summary>
+    /// Gravity actually used, in m/s².
+    /// </summary>
+    /// <remarks>
+    /// Derived rather than stored, so there is exactly one answer to "what gravity is in force"
+    /// and the field on screen cannot drift away from the number the maths uses.
+    /// </remarks>
+    public double Gravity =>
+        GravityIsCustom ? CustomGravity : SelectedPlanet?.SurfaceGravity ?? CustomGravity;
+
+    /// <summary>
+    /// The planet's own gravity, as a plain figure.
+    /// </summary>
+    /// <remarks>
+    /// This is the planet's number, not the effective one — the custom field below shows the
+    /// override, and exactly one of the two is live at a time, the other dimmed. Showing the
+    /// effective value here instead would put the same number on screen twice whenever the
+    /// override is on, and say nothing about what it replaced.
+    /// </remarks>
+    public string GravityText =>
+        SelectedPlanet?.SurfaceGravity is { } g ? $"{g:0.##} m/s²" : "not stated";
+
+    /// <summary>Whether this planet states a gravity we could fall back to.</summary>
+    public bool CanUsePlanetGravity => SelectedPlanet?.SurfaceGravity is not null;
+
+    /// <summary>
+    /// Whether the entry field is live — the checkbox's state.
+    /// </summary>
+    /// <remarks>
+    /// Reads as forced-on when the planet states no gravity, which is every planet in a real
+    /// extracted config: there is nothing to fall back to, so the value has to come from the user.
+    /// The setter records only the user's <em>intent</em>, so visiting an unknown-gravity planet
+    /// does not silently turn the override on for every other planet too.
+    /// </remarks>
+    public bool GravityIsCustom
+    {
+        get => UseCustomGravity || !CanUsePlanetGravity;
+        set => UseCustomGravity = value;
+    }
+
+    /// <summary>Whether to show the "this is a guess" caveat.</summary>
+    public bool GravityIsAssumed =>
+        GravityIsCustom || (SelectedPlanet?.GravityIsAssumed ?? true);
+
+    /// <summary>
+    /// What to say about where this gravity came from.
+    /// </summary>
+    /// <remarks>
+    /// The explanation is not decoration: a planet in the list is a <em>generator</em>, and the
+    /// world decides how big to build it. Two saves can hold the same planet at different radii
+    /// and therefore different surface gravity, so the app has to be clear that its number is for
+    /// a default-sized world and point at the reading that settles it.
+    /// </remarks>
+    public string GravityNote
+    {
+        // Order matters. When nothing is known the override is forced on, so testing for "custom"
+        // first would replace the explanation of *why* we are asking with a bare "your own value"
+        // — leaving the user to guess what number to type and why the app cannot supply it.
+        get
+        {
+            if (!CanUsePlanetGravity)
+            {
+                return "⚠ Not available for this planet. Surface gravity follows from the "
+                       + "planet's radius, which a world chooses when it spawns the planet — the "
+                       + "definition files describe the shape of the gravity field, never its "
+                       + "strength. Stand on the surface and read the G: figure at the bottom "
+                       + "right: 1.00 g is 9.81 m/s².";
+            }
+
+            if (UseCustomGravity) return "Your own value, used as entered.";
+
+            return "Read from the game's own planet data. Tick Custom if your world differs — a "
+                   + "world can spawn a planet at a size of its own choosing.";
+        }
+    }
 
     partial void OnSelectedPlanetChanged(PlanetOption? value)
     {
-        if (value?.SurfaceGravity is { } g) Gravity = g;
-        GravityIsAssumed = value?.GravityIsAssumed ?? true;
+        // Drop the override when the planet changes, so picking a planet visibly changes the
+        // gravity in force. Leaving it on made the app look broken: the number never moved, and
+        // nothing on screen explained that a custom value was quietly winning.
+        //
+        // The custom *value* survives — only the tick is cleared — so a user who set one keeps it
+        // a click away rather than retyping it.
+        UseCustomGravity = false;
+
+        NotifyGravityChanged();
         Recalculate();
     }
 
-    partial void OnGravityChanged(double value) => Recalculate();
+    partial void OnUseCustomGravityChanged(bool value)
+    {
+        NotifyGravityChanged();
+        Recalculate();
+    }
+
+    partial void OnCustomGravityChanged(double value)
+    {
+        OnPropertyChanged(nameof(Gravity));
+        OnPropertyChanged(nameof(GravityText));
+        Recalculate();
+    }
+
+    private void NotifyGravityChanged()
+    {
+        OnPropertyChanged(nameof(Gravity));
+        OnPropertyChanged(nameof(GravityText));
+        OnPropertyChanged(nameof(CanUsePlanetGravity));
+        OnPropertyChanged(nameof(GravityIsCustom));
+        OnPropertyChanged(nameof(GravityIsAssumed));
+        OnPropertyChanged(nameof(GravityNote));
+    }
 
     partial void OnTargetThrustToWeightChanged(double value) => Recalculate();
 
-    partial void OnDirectMassTonnesChanged(double value) => Recalculate();
+    partial void OnDirectMassKgChanged(double value) => Recalculate();
 
-    partial void OnHullMassTonnesChanged(double value) => Recalculate();
+    partial void OnHullMassKgChanged(double value) => Recalculate();
 
     partial void OnSelectedPresetIndexChanged(int value) => Recalculate();
 
     partial void OnMassEntryModeChanged(MassEntryMode value)
     {
+        // Both, or the button being deselected keeps its filled dot.
+        OnPropertyChanged(nameof(IsDirectMode));
         OnPropertyChanged(nameof(IsStorageMode));
         Recalculate();
     }
@@ -140,7 +353,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         var shipMass = ShipMassKg(preset.Fill);
-        ShipMassText = $"{shipMass / 1000:N1} t";
+        ShipMassText = $"{shipMass:N0} kg";
 
         Results.Clear();
 
@@ -178,10 +391,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
         foreach (var r in sized)
         {
             var resource = _index.Resource(r.ResourceId);
+            var thruster = _index.Thruster(r.ThrusterId);
 
             Results.Add(new ThrusterResultViewModel
             {
                 Name = r.ThrusterName,
+                Family = FamilyOf(thruster),
+                SizeCm = thruster?.SizeCm ?? 0,
                 Status = r.Status,
                 Count = r.Count,
                 AddedMassKg = r.AddedMassKg,
@@ -194,6 +410,56 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 Provenance = r.Provenance,
             });
         }
+
+        RebuildFamilies();
+    }
+
+    /// <summary>Splits the flat results into families plus the folded-away remainder.</summary>
+    private void RebuildFamilies()
+    {
+        Families.Clear();
+        Unusable.Clear();
+
+        foreach (var row in Results.Where(r => !r.IsFeasible))
+        {
+            Unusable.Add(row);
+        }
+
+        // Families lead with the cheapest option they can offer, so the best answer overall is the
+        // first row on screen — the same ordering the flat list had, one level up.
+        var families = Results
+            .Where(r => r.IsFeasible)
+            .GroupBy(r => r.Family, StringComparer.Ordinal)
+            .OrderBy(g => g.Min(r => r.AddedMassKg))
+            .ThenBy(g => g.Key, StringComparer.Ordinal);
+
+        foreach (var family in families)
+        {
+            // Within a family, ascending size: the progression is the thing worth reading, and it
+            // makes "one size up" an adjacent row rather than a search.
+            Families.Add(new ThrusterFamilyViewModel(
+                family.Key,
+                [.. family.OrderBy(r => r.SizeCm).ThenBy(r => r.Name, StringComparer.Ordinal)]));
+        }
+
+        OnPropertyChanged(nameof(HasUnusable));
+        OnPropertyChanged(nameof(UnusableSummary));
+    }
+
+    /// <summary>
+    /// The family heading a thruster sits under, from its thrust class.
+    /// </summary>
+    /// <remarks>
+    /// The thrust class is the right grouping key rather than the name: it is what actually decides
+    /// whether the thruster works here, and it is data rather than a string prefix that happens to
+    /// look right today.
+    /// </remarks>
+    private static string FamilyOf(Thruster? thruster)
+    {
+        var thrustClass = thruster?.ThrustClass;
+        if (string.IsNullOrEmpty(thrustClass)) return "Other";
+
+        return char.ToUpperInvariant(thrustClass[0]) + thrustClass[1..];
     }
 
     /// <summary>
@@ -208,10 +474,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (MassEntryMode == MassEntryMode.Direct)
         {
-            return Math.Max(0, DirectMassTonnes) * 1000;
+            return Math.Max(0, DirectMassKg);
         }
 
-        var total = Math.Max(0, HullMassTonnes) * 1000;
+        var total = Math.Max(0, HullMassKg);
 
         foreach (var row in Containers)
         {
@@ -249,6 +515,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             {
                 Id = p.Id,
                 Name = p.Name,
+
                 SurfaceGravity = p.SurfaceGravity,
                 GravityIsAssumed = p.ProvenanceOf("surfaceGravity") != Provenance.Measured,
                 Atmosphere = p.Atmosphere,

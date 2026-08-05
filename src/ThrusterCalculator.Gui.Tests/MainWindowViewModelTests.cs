@@ -1,3 +1,4 @@
+using ThrusterCalculator.Core;
 using ThrusterCalculator.Core.Sizing;
 using ThrusterCalculator.Gui.Services;
 using ThrusterCalculator.Gui.ViewModels;
@@ -41,6 +42,125 @@ public class MainWindowViewModelTests
         var vm = Create();
 
         Assert.True(vm.GravityIsAssumed);
+    }
+
+    // ── gravity override ──────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void PlanetGravityIsUsedAndTheFieldIsLockedUntilOverridden()
+    {
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.First(p => p.SurfaceGravity is not null);
+
+        Assert.False(vm.GravityIsCustom);
+        Assert.True(vm.CanUsePlanetGravity);
+        Assert.Equal(vm.SelectedPlanet.SurfaceGravity, vm.Gravity);
+    }
+
+    [Fact]
+    public void TheOverrideTakesEffectWithoutDisturbingTheStoredValue()
+    {
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.First(p => p.SurfaceGravity is not null);
+        vm.CustomGravity = 3.71;
+
+        // Not in force yet, so the planet's own value is what counts.
+        Assert.Equal(vm.SelectedPlanet.SurfaceGravity, vm.Gravity);
+
+        vm.GravityIsCustom = true;
+
+        // Ticking must not overwrite what the user typed — the two numbers are separate on screen
+        // and the custom one is theirs to keep.
+        Assert.Equal(3.71, vm.CustomGravity);
+        Assert.Equal(3.71, vm.Gravity);
+    }
+
+    [Fact]
+    public void ChangingPlanetClearsTheOverrideButKeepsItsValue()
+    {
+        // Without this, selecting a planet changed the maths and nothing on screen, because the
+        // override silently kept winning — it read as the planet picker being broken.
+        var vm = Create();
+        var planets = vm.Planets.Where(p => p.SurfaceGravity is not null).Take(2).ToList();
+
+        vm.SelectedPlanet = planets[0];
+        vm.GravityIsCustom = true;
+        vm.CustomGravity = 3.71;
+
+        vm.SelectedPlanet = planets[1];
+
+        Assert.False(vm.GravityIsCustom);
+        Assert.Equal(planets[1].SurfaceGravity, vm.Gravity);
+
+        // The value survives, so re-enabling it is one click rather than retyping.
+        Assert.Equal(3.71, vm.CustomGravity);
+    }
+
+    [Fact]
+    public void TheDisplayedGravityFollowsTheSelectedPlanet()
+    {
+        var vm = Create();
+        var planets = vm.Planets.Where(p => p.SurfaceGravity is not null).Take(2).ToList();
+
+        vm.SelectedPlanet = planets[0];
+        var first = vm.GravityText;
+
+        vm.SelectedPlanet = planets[1];
+
+        Assert.NotEqual(first, vm.GravityText);
+        Assert.Contains("m/s", vm.GravityText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheGravityNoteExplainsWhereTheNumberCameFrom()
+    {
+        var vm = Create();
+
+        // Stated in the config, which after the delta-encoding fix is every real planet.
+        vm.SelectedPlanet = vm.Planets.First(p => p.SurfaceGravity is not null);
+        Assert.Contains("game's own planet data", vm.GravityNote, StringComparison.Ordinal);
+
+        // Overridden by choice: no explanation of a value we are not using.
+        vm.GravityIsCustom = true;
+        Assert.Contains("Your own value", vm.GravityNote, StringComparison.Ordinal);
+
+        // Nothing known. The override is forced on here, but the note must still explain *why*
+        // we are asking — otherwise the user is left guessing what to type.
+        vm.GravityIsCustom = false;
+        vm.SelectedPlanet = vm.Planets.Single(p => p.SurfaceGravity is null);
+
+        Assert.True(vm.GravityIsCustom);
+        Assert.Contains("radius", vm.GravityNote, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void APlanetWithNoStatedGravityForcesTheOverrideOn()
+    {
+        // Every planet in a real extracted config is this case: gravity depends on planet radius,
+        // which is per-world data the definitions do not carry. There is nothing to fall back to.
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.Single(p => p.SurfaceGravity is null);
+
+        Assert.False(vm.CanUsePlanetGravity);
+        Assert.True(vm.GravityIsCustom);
+        Assert.Equal(vm.CustomGravity, vm.Gravity);
+    }
+
+    [Fact]
+    public void BeingForcedOnDoesNotRecordAnOverrideForOtherPlanets()
+    {
+        // The forced state is a consequence of the planet, not a choice the user made, so it must
+        // not follow them to a planet that does state its gravity.
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.Single(p => p.SurfaceGravity is null);
+
+        Assert.True(vm.GravityIsCustom);
+        Assert.False(vm.UseCustomGravity);
+
+        vm.SelectedPlanet = vm.Planets.First(p => p.SurfaceGravity is not null);
+
+        Assert.False(vm.GravityIsCustom);
+        Assert.Equal(vm.SelectedPlanet.SurfaceGravity, vm.Gravity);
     }
 
     [Fact]
@@ -107,6 +227,66 @@ public class MainWindowViewModelTests
         Assert.Contains(feasible, r => r.DrawText.EndsWith("L/s", StringComparison.Ordinal));
     }
 
+    // ── results panel ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void FeasibleLoadoutsAreGroupedByFamilyAndOrderedBySize()
+    {
+        var vm = Create();
+
+        Assert.NotEmpty(vm.Families);
+
+        foreach (var family in vm.Families)
+        {
+            Assert.NotEmpty(family.Rows);
+            Assert.All(family.Rows, r => Assert.Equal(family.Name, r.Family));
+            Assert.All(family.Rows, r => Assert.True(r.IsFeasible));
+
+            // Ascending size, so "one size up" is the next row rather than a search.
+            Assert.Equal(family.Rows.OrderBy(r => r.SizeCm).Select(r => r.SizeCm),
+                         family.Rows.Select(r => r.SizeCm));
+        }
+    }
+
+    [Fact]
+    public void TheCheapestFamilyLeads()
+    {
+        // The best answer overall should be the first row on screen.
+        var vm = Create();
+
+        var bestPerFamily = vm.Families.Select(f => f.Rows.Min(r => r.AddedMassKg)).ToList();
+
+        Assert.Equal(bestPerFamily.OrderBy(m => m), bestPerFamily);
+    }
+
+    [Fact]
+    public void UnusableLoadoutsAreFoldedAwayButStillCounted()
+    {
+        // Collapsed, never hidden — on an atmospheric world "the ion family is dead here" is the
+        // most useful thing the panel says, it just does not need a row each to say it.
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.Single(p => p.Atmosphere is not null && p.SurfaceGravity is not null);
+
+        Assert.True(vm.HasUnusable);
+        Assert.All(vm.Unusable, r => Assert.False(r.IsFeasible));
+        Assert.Contains(vm.Unusable.Count.ToString(), vm.UnusableSummary, StringComparison.Ordinal);
+
+        // Nothing may fall between the two collections.
+        Assert.Equal(vm.Results.Count,
+                     vm.Families.Sum(f => f.Rows.Count) + vm.Unusable.Count);
+    }
+
+    [Fact]
+    public void FamiliesRebuildWhenTheEnvironmentChanges()
+    {
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.Single(p => p.Atmosphere is null);
+
+        // In vacuum ion works and atmospheric does not, so the grouping must have inverted.
+        Assert.Contains(vm.Families, f => f.Name.Contains("Ion", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(vm.Unusable, r => r.Name.Contains("Atmospheric", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void UnimplementedBlocksAreShownRatherThanHidden()
     {
@@ -134,16 +314,136 @@ public class MainWindowViewModelTests
 
     // ── mass entry ────────────────────────────────────────────────────────────────────────────
 
+    // ── settings ──────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void RestoresTheRememberedPlanetOverrideAndRatio()
+    {
+        var config = ConfigSource.Load();
+        var target = new MainWindowViewModel(config).Planets.Last();
+
+        var vm = new MainWindowViewModel(config, new AppSettings
+        {
+            SelectedPlanetId = target.Id,
+            UseCustomGravity = true,
+            CustomGravity = 3.71,
+            TargetThrustToWeight = 1.6,
+        });
+
+        Assert.Equal(target.Id, vm.SelectedPlanet?.Id);
+        Assert.True(vm.GravityIsCustom);
+        Assert.Equal(3.71, vm.Gravity);
+        Assert.Equal(1.6, vm.TargetThrustToWeight);
+    }
+
+    [Fact]
+    public void AStoredGravityNeverMasksThePlanetsOwn()
+    {
+        // Only the override is persisted. A stored copy of an extracted gravity would go stale the
+        // moment the config is rebuilt and then quietly win over the newer number — so with the
+        // override off, the planet's own value must be what shows, whatever the file says.
+        var vm = new MainWindowViewModel(
+            ConfigSource.Load(),
+            new AppSettings { UseCustomGravity = false, CustomGravity = 42 });
+
+        vm.SelectedPlanet = vm.Planets.First(p => p.SurfaceGravity is not null);
+
+        Assert.Equal(vm.SelectedPlanet.SurfaceGravity, vm.Gravity);
+        Assert.NotEqual(42, vm.Gravity);
+    }
+
+    [Fact]
+    public void FallsBackToTheFirstPlanetWhenTheRememberedOneIsGone()
+    {
+        // Planets can disappear between runs when the config is rebuilt; that must not leave the
+        // app with nothing selected and an empty results panel.
+        var vm = new MainWindowViewModel(
+            ConfigSource.Load(), new AppSettings { SelectedPlanetId = "no-such-planet" });
+
+        Assert.NotNull(vm.SelectedPlanet);
+        Assert.Equal(vm.Planets.First().Id, vm.SelectedPlanet!.Id);
+    }
+
+    [Fact]
+    public void CapturesItsStateBackIntoSettings()
+    {
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.Last();
+        vm.GravityIsCustom = true;
+        vm.CustomGravity = 5.5;
+        vm.TargetThrustToWeight = 1.8;
+
+        var settings = new AppSettings();
+        vm.CaptureInto(settings);
+
+        Assert.True(settings.UseCustomGravity);
+        Assert.Equal(vm.Planets.Last().Id, settings.SelectedPlanetId);
+        Assert.Equal(5.5, settings.CustomGravity);
+        Assert.Equal(1.8, settings.TargetThrustToWeight);
+    }
+
+    [Fact]
+    public void EitherRadioOptionCanSelectItsMode()
+    {
+        // The bug this covers: IsStorageMode was a computed getter with no setter, and the other
+        // option was bound to {Binding !IsStorageMode}. Neither could write the mode back, so
+        // clicking "Work it out from storage" left the section disabled and the selection unmoved.
+        var vm = Create();
+
+        Assert.True(vm.IsDirectMode);
+        Assert.False(vm.IsStorageMode);
+
+        vm.IsStorageMode = true;
+
+        Assert.Equal(MassEntryMode.Storage, vm.MassEntryMode);
+        Assert.False(vm.IsDirectMode);
+
+        vm.IsDirectMode = true;
+
+        Assert.Equal(MassEntryMode.Direct, vm.MassEntryMode);
+        Assert.False(vm.IsStorageMode);
+    }
+
+    [Fact]
+    public void DeselectingAnOptionDoesNotFlipTheMode()
+    {
+        // Radio buttons unset the outgoing option before setting the incoming one. Honouring that
+        // false would flip the mode and immediately flip it back.
+        var vm = Create();
+        vm.IsStorageMode = true;
+
+        vm.IsStorageMode = false;
+
+        Assert.Equal(MassEntryMode.Storage, vm.MassEntryMode);
+    }
+
+    [Fact]
+    public void MassesAreReportedInKilogramsThroughout()
+    {
+        // The player reads kilograms off the HUD and types kilograms in; every mass we print back
+        // must be the same unit, or checking a result means converting in your head.
+        var vm = Create();
+        vm.MassEntryMode = MassEntryMode.Direct;
+        vm.DirectMassKg = 500000;
+
+        Assert.Contains("kg", vm.ShipMassText, StringComparison.Ordinal);
+        Assert.All(vm.Loads, l => Assert.Contains("kg", l.MassText, StringComparison.Ordinal));
+
+        var feasible = vm.Results.First(r => r.IsFeasible);
+        Assert.Contains("kg", feasible.AddedMassText, StringComparison.Ordinal);
+        Assert.Contains("kg", feasible.RangeText, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void DirectMassDrivesTheRequirement()
     {
         var vm = Create();
         vm.MassEntryMode = MassEntryMode.Direct;
 
-        vm.DirectMassTonnes = 500;
+        vm.DirectMassKg = 500000;
         var lighter = vm.Results.First(r => r.IsFeasible).Count;
 
-        vm.DirectMassTonnes = 1000;
+        vm.DirectMassKg = 1000000;
         var heavier = vm.Results.First(r => r.IsFeasible).Count;
 
         Assert.True(heavier > lighter);
@@ -165,7 +465,7 @@ public class MainWindowViewModelTests
     {
         var vm = Create();
         vm.MassEntryMode = MassEntryMode.Storage;
-        vm.HullMassTonnes = 300;
+        vm.HullMassKg = 300000;
         vm.Containers.First().Count = 4;
 
         var masses = vm.Loads.Select(l => l.TotalMassKg).ToList();
@@ -180,7 +480,7 @@ public class MainWindowViewModelTests
         // Empty means no cargo, not no containers.
         var vm = Create();
         vm.MassEntryMode = MassEntryMode.Storage;
-        vm.HullMassTonnes = 100;
+        vm.HullMassKg = 100000;
 
         var bare = vm.Loads[0].TotalMassKg;
         vm.Containers.First().Count = 10;
@@ -195,7 +495,7 @@ public class MainWindowViewModelTests
         // so a tank adds its own weight and nothing else, and cargo fill must not move it.
         var vm = Create();
         vm.MassEntryMode = MassEntryMode.Storage;
-        vm.HullMassTonnes = 100;
+        vm.HullMassKg = 100000;
 
         var bare = vm.Loads[0].TotalMassKg;
         vm.Tanks.First().Count = 3;
@@ -211,7 +511,7 @@ public class MainWindowViewModelTests
     {
         var vm = Create();
         vm.MassEntryMode = MassEntryMode.Direct;
-        vm.DirectMassTonnes = 500;
+        vm.DirectMassKg = 500000;
 
         vm.TargetThrustToWeight = 1.0;
         var at1 = vm.Results.First(r => r.IsFeasible).Count;
@@ -272,7 +572,7 @@ public class MainWindowViewModelTests
         var vm = Create();
         vm.MassEntryMode = MassEntryMode.Direct;
 
-        vm.DirectMassTonnes = 0;
+        vm.DirectMassKg = 0;
 
         Assert.Empty(vm.Results);
         Assert.Equal("—", vm.RequirementText);

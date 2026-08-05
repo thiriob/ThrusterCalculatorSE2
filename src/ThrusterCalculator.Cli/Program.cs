@@ -22,6 +22,7 @@ internal static class Program
                 "dump-schemas" => DumpSchemasCommand.Run(rest),
                 "extract" => ExtractCommand.Run(rest),
                 "verify" => VerifyCommand.Run(rest),
+                "planet" => PlanetCommand.Run(rest),
                 "-h" or "--help" or "help" => Help(),
                 _ => Unknown(command),
             };
@@ -58,6 +59,8 @@ internal static class Program
                           Diff two runs across a game update to see what Keen changed.
           extract         Produce gamedata.json from a local Space Engineers 2 install.
           verify          Check a local install against the invariants we rely on.
+          planet [NAME]   Walk a planet's inheritance chain, showing where each
+                          gravity and atmosphere value comes from — or stops.
 
         COMMON OPTIONS
           --install PATH  Use this Space Engineers 2 install instead of searching for one.

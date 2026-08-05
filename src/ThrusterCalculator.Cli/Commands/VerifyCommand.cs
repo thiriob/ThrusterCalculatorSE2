@@ -168,6 +168,13 @@ internal static class VerifyCommand
         CheckAll("every tank resolves its resource", data.Tanks,
             t => t.Resource is not null, t => t.Id, ref failures);
 
+        // Gravity is stated on the planet's gravity generator, usually inherited from a legacy
+        // base template that encodes its components as a plain array rather than a delta. Reading
+        // only the delta form silently lost it for 8 of 10 planets, which then read as "the game
+        // does not ship surface gravity at all".
+        CheckAll("every planet resolves its surface gravity", data.Planets,
+            p => p.SurfaceGravity is > 0, p => p.Id, ref failures);
+
         // Schema.md R1: the config is the interface, and it must not leak the game's GUID graph.
         CheckAll("no GUID leaks into a reference", data.Thrusters,
             t => !Guid.TryParse(t.Density, out _)

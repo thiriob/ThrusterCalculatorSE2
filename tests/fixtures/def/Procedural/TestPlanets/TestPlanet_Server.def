@@ -1,0 +1,25 @@
+{
+  "$Bundles": { "Game2": "9.9.9.222" },
+  "$Type": "Game2:Keen.Test.Fake.Prefabs.PrefabDefinitionObjectBuilder",
+  "$Value": {
+    "Guid": "f0000000-0000-0000-0000-000000000001",
+    "_entity": {
+      "DebugName": "TestPlanet",
+      "ObjectBuilders": {
+        "$DeltaEncoded": true,
+        "Keys": [ "f0000000-0000-0000-0000-0000000000aa" ],
+        "Changed": [
+          {
+            "Kind": "Update",
+            "Index": 0,
+            "Value": {
+              "$Type": "Game2:Keen.Test.Fake.RangedAffectGenerators.Atmosphere.AtmosphereGeneratorObjectBuilder",
+              "AffectDistance": 1.15,
+              "ConstantAffectDistance": 1.0
+            }
+          }
+        ]
+      }
+    }
+  }
+}

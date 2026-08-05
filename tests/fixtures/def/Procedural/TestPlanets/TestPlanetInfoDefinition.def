@@ -1,0 +1,9 @@
+{
+  "$Bundles": { "Game2": "9.9.9.222" },
+  "$Type": "Game2:Keen.Test.Fake.Debugging.Screens.Voxels.PlanetInfoDefinitionObjectBuilder",
+  "$Value": {
+    "Guid": "f0000000-0000-0000-0000-0000000000f1",
+    "Name": "TestPlanet",
+    "Spawn": "f0000000-0000-0000-0000-000000000001"
+  }
+}

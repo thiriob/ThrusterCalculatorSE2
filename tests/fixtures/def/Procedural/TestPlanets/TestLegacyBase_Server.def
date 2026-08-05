@@ -1,0 +1,22 @@
+{
+  "$Bundles": { "Game2": "9.9.9.222" },
+  "$Type": "Game2:Keen.Test.Fake.Prefabs.PrefabDefinitionObjectBuilder",
+  "$Value": {
+    "Guid": "f0000000-0000-0000-0000-000000000002",
+    "_entity": {
+      "DebugName": "TestLegacyBase",
+      "ObjectBuilders": [
+        {
+          "Value": {
+            "$Type": "Game2:Keen.Test.Fake.RangedAffectGenerators.Gravity.GravityGeneratorObjectBuilder",
+            "AffectDistance": 1.35,
+            "GravitationalAcceleration": 7.5,
+            "AccelerationDistance": 1.05,
+            "FallOffPower": -1,
+            "GravityShape": "Spherical"
+          }
+        }
+      ]
+    }
+  }
+}

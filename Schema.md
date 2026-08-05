@@ -212,13 +212,12 @@ else.
   "id": "verdure",
   "name": "Verdure",
   "milestone": "VS2_3",                       // newest variant wins — Research §5.1
-  "surfaceGravity": null,                     // m/s² — NEVER in game data, always the user's
+  "surfaceGravity": 9.80665,                  // m/s² — GravityGenerator.GravitationalAcceleration
   "gravityAffectDistance": 1.5,               // × planet radius
   "atmosphere": {
     "affectDistance": 1.15,                   // density → 0 here
     "constantAffectDistance": 1.08            // density = 1.0 up to here
-  },
-  "provenance": { "surfaceGravity": "unknown" }
+  }
 }
 ```
 
@@ -226,15 +225,16 @@ Milestone-versioned duplicates exist in the game data (`Verdure` appears under V
 **The producer resolves this — one entry per planet, newest milestone wins** — so the consumer never
 sees a duplicate. `milestone` is retained for display and diagnostics.
 
-**`surfaceGravity` is `null` + `"unknown"` for every planet, always.** It is world-instance data set
-when a planet is spawned, not definition data, so the producer genuinely cannot read it (Research
-§5.3) — and it does not invent one. The UI supplies a working default the user can edit, and marks
-every number computed from it `assumed`. That is why *every* configuration row in the app carries an
-`assumed` badge; it is the gravity, not the thruster data.
+**`surfaceGravity` is `measured`**, stated by the planet's gravity generator and usually inherited
+from a legacy base template (Research §5.3). Verified against the game's own HUD: Verdure's
+9.80665 m/s² is exactly the `G: 1.00 g` it reports on the surface.
 
-The upside of the same rule: a planet the producer has never heard of — a future Keen planet, or a
-player's custom one — appears in the list on the day it ships, needing exactly one number from the
-user.
+A planet that resolves nothing gets `null` + `"unknown"` and a `unknownSurfaceGravity` warning, and
+the UI shows an editable field rather than hiding the planet — which is what makes a future Keen
+planet, or a player's custom one, usable the day it ships.
+
+Consumers should still offer an **override**: a world can spawn a planet at a size of its own
+choosing, so the extracted figure is the default, not a guarantee about *your* save.
 
 `atmosphere` may also be `null` + `"unknown"` when no geometry exists anywhere in the planet's
 inheritance chain. The consumer must read that as *unknown*, not as *airless*; today one unshipped

@@ -606,12 +606,17 @@ public sealed class GameDataExtractor
             var id = BlockNaming.IdOf(displayName.Replace(" ", string.Empty, StringComparison.Ordinal));
 
             var geometry = ReadPlanetGeometry(info);
-            var provenance = new Dictionary<string, Provenance>(StringComparer.Ordinal)
+            var provenance = new Dictionary<string, Provenance>(StringComparer.Ordinal);
+
+            if (geometry.SurfaceGravity is null)
             {
-                // Surface gravity is world-instance data and is never in the shipped definitions
-                // (Research.md §5.3), so it is always the user's to supply.
-                ["surfaceGravity"] = Provenance.Unknown,
-            };
+                provenance["surfaceGravity"] = Provenance.Unknown;
+
+                Warn("unknownSurfaceGravity",
+                    $"{SplitMilestoneSuffix(rawName).Name}: no GravitationalAcceleration on its "
+                    + "gravity generator or anywhere in its inheritance chain, so the user must "
+                    + "supply it.", info.RelativePath);
+            }
 
             var atmosphere = geometry.Atmosphere;
             if (!geometry.Measured)
@@ -644,7 +649,7 @@ public sealed class GameDataExtractor
                 Id = id,
                 Name = displayName,
                 Milestone = milestone,
-                SurfaceGravity = null,
+                SurfaceGravity = geometry.SurfaceGravity,
                 GravityAffectDistance = geometry.GravityAffectDistance,
                 Atmosphere = atmosphere,
                 ProvenanceOverrides = provenance,
@@ -687,7 +692,7 @@ public sealed class GameDataExtractor
     private const double ImplausibleAtmosphereExtent = 5.0;
 
     private readonly record struct PlanetGeometry(
-        double? GravityAffectDistance, Atmosphere? Atmosphere, bool Measured);
+        double? GravityAffectDistance, double? SurfaceGravity, Atmosphere? Atmosphere, bool Measured);
 
     /// <summary>
     /// Follows <c>InfoDefinition -> Spawn -> prefab -> composite</c> looking for the gravity and
@@ -707,6 +712,7 @@ public sealed class GameDataExtractor
         var prefab = _definitions.Resolve(info.GetString("Spawn"));
 
         double? gravity = null;
+        double? surfaceGravity = null;
         double? affect = null;
         double? constant = null;
 
@@ -719,6 +725,12 @@ public sealed class GameDataExtractor
             if (type.Contains("GravityGeneratorObjectBuilder", StringComparison.Ordinal))
             {
                 gravity ??= Number(component, "AffectDistance");
+
+                // Surface gravity in m/s², stated outright. An earlier draft of the research
+                // concluded this was absent from the definitions and had to be supplied by the
+                // user — that was wrong, and only looked true because this reader took
+                // AffectDistance and ignored every other field on the same component.
+                surfaceGravity ??= Number(component, "GravitationalAcceleration");
             }
             else if (type.Contains("AtmosphereGeneratorObjectBuilder", StringComparison.Ordinal))
             {
@@ -728,8 +740,9 @@ public sealed class GameDataExtractor
         }
 
         return affect is { } a && constant is { } c
-            ? new PlanetGeometry(gravity, new Atmosphere { AffectDistance = a, ConstantAffectDistance = c }, true)
-            : new PlanetGeometry(gravity, null, false);
+            ? new PlanetGeometry(gravity, surfaceGravity,
+                new Atmosphere { AffectDistance = a, ConstantAffectDistance = c }, true)
+            : new PlanetGeometry(gravity, surfaceGravity, null, false);
     }
 
     /// <summary>
@@ -768,22 +781,46 @@ public sealed class GameDataExtractor
         }
     }
 
+    /// <summary>
+    /// Inline component payloads, in either encoding the game uses.
+    /// </summary>
+    /// <remarks>
+    /// A container is either delta-encoded — an object with a <c>Changed</c> array — or a plain
+    /// array of the same entries. <b>Both occur, and nothing marks which to expect.</b> The legacy
+    /// planet templates use the plain form, so a reader that handled only the delta form walked
+    /// straight past <c>PlanetWithoutAtmosphere</c>'s gravity generator and reported that Verdure
+    /// and Kemik state no surface gravity — which was then written up as "gravity is not in the
+    /// game files at all". It is; we were not looking in the second shape.
+    /// <para>
+    /// <see cref="BlockCompositionIndex.ReadComponentGuids"/> already handled both, for exactly
+    /// this reason. This is the same lesson, learned twice.
+    /// </para>
+    /// </remarks>
     private static IEnumerable<JsonElement> ChangedValues(JsonElement container)
     {
-        if (container.ValueKind != JsonValueKind.Object
-            || !container.TryGetProperty("Changed", out var changed)
-            || changed.ValueKind != JsonValueKind.Array)
+        var entries = container.ValueKind switch
         {
-            yield break;
-        }
+            JsonValueKind.Object when container.TryGetProperty("Changed", out var changed)
+                                      && changed.ValueKind == JsonValueKind.Array => changed,
+            JsonValueKind.Array => container,
+            _ => default,
+        };
 
-        foreach (var entry in changed.EnumerateArray())
+        if (entries.ValueKind != JsonValueKind.Array) yield break;
+
+        foreach (var entry in entries.EnumerateArray())
         {
-            if (entry.ValueKind == JsonValueKind.Object
-                && entry.TryGetProperty("Value", out var value)
+            if (entry.ValueKind != JsonValueKind.Object) continue;
+
+            // Delta entries wrap the payload in Value; a plain array may hold it directly.
+            if (entry.TryGetProperty("Value", out var value)
                 && value.ValueKind == JsonValueKind.Object)
             {
                 yield return value;
+            }
+            else if (entry.TryGetProperty("$Type", out _))
+            {
+                yield return entry;
             }
         }
     }

@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using ThrusterCalculator.Core.Sizing;
 using ThrusterCalculator.Model;
@@ -22,7 +24,7 @@ public sealed partial class StorageRowViewModel : ObservableObject
 
     public bool IsMassKnown => BlockMassKg is not null;
 
-    public string CapacityText => CapacityKg > 0 ? $"{CapacityKg / 1000:N1} t cargo" : string.Empty;
+    public string CapacityText => CapacityKg > 0 ? $"{CapacityKg:N0} kg cargo" : string.Empty;
 
     public string BlockMassText =>
         BlockMassKg is { } m ? $"{m:N0} kg each" : "mass unknown";
@@ -34,6 +36,28 @@ public sealed class ThrusterResultViewModel
     public required string Name { get; init; }
 
     public required SizingStatus Status { get; init; }
+
+    /// <summary>Block size in centimetres, which is what the family orders by.</summary>
+    public required int SizeCm { get; init; }
+
+    /// <summary>The family this belongs under, e.g. <c>"Atmospheric"</c>.</summary>
+    public required string Family { get; init; }
+
+    /// <summary>
+    /// Just the size, e.g. <c>"2.5 m"</c> — the family is the group heading above it.
+    /// </summary>
+    public string SizeText
+    {
+        get
+        {
+            if (SizeCm <= 0) return Name;
+
+            // Metres read better than centimetres at these sizes: "2.5 m", not "250 cm".
+            var metres = SizeCm / 100.0;
+            return metres.ToString(metres % 1 == 0 ? "0" : "0.##", CultureInfo.InvariantCulture)
+                   + " m";
+        }
+    }
 
     public bool IsFeasible => Status == SizingStatus.Feasible;
 
@@ -58,7 +82,15 @@ public sealed class ThrusterResultViewModel
 
     public string CountText => IsFeasible ? $"{Count} ×" : "—";
 
-    public string AddedMassText => IsFeasible ? $"+{AddedMassKg / 1000:N1} t" : string.Empty;
+    /// <summary>
+    /// Mass the loadout adds, in kilograms.
+    /// </summary>
+    /// <remarks>
+    /// Every mass in the UI is kilograms, matching the figure the game shows the player. Mixing
+    /// units — kilograms in, tonnes out — would mean converting in your head to check whether a
+    /// result is sane, which is exactly when a factor of a thousand slips past unnoticed.
+    /// </remarks>
+    public string AddedMassText => IsFeasible ? $"+{AddedMassKg:N0} kg" : string.Empty;
 
     public string RatioText => IsFeasible ? $"{AchievedThrustToWeight:0.00}×" : string.Empty;
 
@@ -70,8 +102,23 @@ public sealed class ThrusterResultViewModel
     /// before it needs re-planning — genuinely useful, and free from the same formula.
     /// </remarks>
     public string RangeText => IsFeasible
-        ? $"covers {ShipMassKg / 1000:N0}–{MaxSupportedShipMassKg / 1000:N0} t"
+        ? $"covers {ShipMassKg:N0}–{MaxSupportedShipMassKg:N0} kg"
         : string.Empty;
+
+    /// <summary>The upper bound alone, which is what the table column shows.</summary>
+    public string MaxSupportedText => IsFeasible && !double.IsInfinity(MaxSupportedShipMassKg)
+        ? $"{MaxSupportedShipMassKg:N0} kg"
+        : string.Empty;
+
+    /// <summary>
+    /// The full picture, for the row's tooltip.
+    /// </summary>
+    /// <remarks>
+    /// Headroom is not a column: it is derivable from the covered range, and the table earns its
+    /// readability by carrying only what you choose between. It stays reachable rather than cut.
+    /// </remarks>
+    public string DetailText =>
+        IsFeasible ? $"{RangeText} · {HeadroomText}" : StatusText;
 
     public string HeadroomText
     {
@@ -128,8 +175,20 @@ public sealed class ThrusterResultViewModel
     };
 }
 
+/// <summary>
+/// One thruster family, with its sizes in ascending order.
+/// </summary>
+/// <remarks>
+/// Grouping rather than tabbing is deliberate. The panel's whole job is letting you weigh an
+/// atmospheric loadout against a hydrogen one (Design.md §3.3), and a tab strip puts two thirds of
+/// the options behind a click — you would be comparing against memory. Headings give the eye
+/// somewhere to rest without hiding anything.
+/// </remarks>
+public sealed record ThrusterFamilyViewModel(
+    string Name, IReadOnlyList<ThrusterResultViewModel> Rows);
+
 /// <summary>Total mass under one cargo loading, with tanks always full.</summary>
 public sealed record LoadSummary(string Name, double TotalMassKg, bool IsSelected)
 {
-    public string MassText => $"{TotalMassKg / 1000:N1} t";
+    public string MassText => $"{TotalMassKg:N0} kg";
 }

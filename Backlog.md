@@ -103,6 +103,22 @@ they are not cargo blocks. Harmless unless someone starts summing all inventorie
 
 ---
 
+### B14 — ~~Curated gravity table~~ RESOLVED: gravity is extracted
+
+**Closed, and the table is deleted.** `GravityGenerator.GravitationalAcceleration` states surface
+gravity in the definitions; all ten planets extract as `measured` (Research §5.3).
+
+Worth recording how the wrong answer nearly shipped. A hand-curated table was built, seeded from an
+in-game HUD reading, and defended on the grounds that the value "is not in the files". It was — the
+reader took one field off the gravity component and ignored the rest, and the base template that
+supplies it encodes its components as a plain array rather than a delta, so the walk reached the
+right file and read nothing. The in-game measurement was **verification of an extractable value**,
+mistaken for the only available source.
+
+The instinct that caught it was a principle, not evidence: reading the HUD is not in the spirit of
+a tool whose premise is that the game files are the source of truth. That was right, and the data
+agreed.
+
 ## Modelling assumptions not yet verified in game
 
 ### B6 — Both effectiveness ramps are assumed linear
@@ -121,11 +137,32 @@ implementation — contained by design.
 
 ## Deferred product scope
 
-### B7 — Altitude
+### B7 — Altitude, and the two things it needs first
 
 The model already takes distance in planet radii; v1 evaluates at the surface because Plan mode
-answers the lift-off question. An altitude slider needs no new data, but it does need B4 and B6
-resolved to mean anything.
+answers the lift-off question. An altitude slider needs B4 and B6 resolved to mean anything — and
+two further things that only became clear once gravity was measured in game (Research §5.3.1):
+
+**The gravity falloff model is already in the data** — it just is not extracted yet, because v1
+never leaves the surface. The same component that states surface gravity carries
+`AccelerationDistance` (constant out to here), `AffectDistance` (zero beyond), `FallOffPower` (the
+exponent, with `-1` as a sentinel exactly like thrust classes) and `GravityShape`. Extracting them
+is a few lines in `ReadPlanetGeometry` plus schema fields; **do it when altitude lands, not
+before**, so the config carries nothing unused.
+
+In-game readings will still be worth taking as a check: Verdure reads 1.00 g on the ground and
+0.33 g near the boundary of space, and an inverse square would give 0.756 at the atmosphere edge —
+so whatever the model is, it is much steeper than Newton, and the extracted `FallOffPower` should
+say why.
+
+**Altitude needs planet radius, which we do not have.** Every distance in the data is expressed in
+planet radii, so turning "5 km up" into `r/R` requires `R` — and radius is per-world instance data
+(Research §5.3). A radius input was considered and **deliberately not added**: with v1 evaluating
+at the surface, every value a user typed would change no output at all, and a field that visibly
+does nothing implies the app is using it. It belongs with this entry, not before it.
+
+**Consequence today:** none. Surface gravity is measured, sea-level air density is 1.0 regardless,
+and the sizing answer does not depend on either falloff curve.
 
 ### B8 — Mixed thruster compositions
 

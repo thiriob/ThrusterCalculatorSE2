@@ -251,6 +251,41 @@ public class DefinitionInheritanceTests
         Assert.Contains(data.Warnings, w => w.Code == "unresolvedConsumedResource");
     }
 
+    private const string TestPlanetPrefab = "f0000000-0000-0000-0000-000000000001";
+
+    private const string TestLegacyBasePrefab = "f0000000-0000-0000-0000-000000000002";
+
+    [Fact]
+    public void SurfaceGravityIsInheritedFromAPlainArrayOfComponents()
+    {
+        // The bug this pins down: a planet's own prefab delta-encodes its components, but the
+        // legacy base it inherits from lists them as a plain array. Handling only the delta form
+        // walked past the base's gravity generator entirely — and 8 of 10 real planets came out
+        // with no surface gravity, which was then written up as "the game does not ship it".
+        var data = ExtractWith(new FakeInheritance((TestPlanetPrefab, TestLegacyBasePrefab)));
+
+        var planet = data.Planets.Single(p => p.Id == "testPlanet");
+
+        Assert.Equal(7.5, planet.SurfaceGravity);
+        Assert.Equal(Provenance.Measured, planet.ProvenanceOf("surfaceGravity"));
+
+        // The planet's own delta-encoded component must still be read.
+        Assert.NotNull(planet.Atmosphere);
+        Assert.Equal(1.15, planet.Atmosphere.AffectDistance);
+    }
+
+    [Fact]
+    public void APlanetWithNoReachableGravityIsWarnedRatherThanDefaulted()
+    {
+        var data = ExtractWith(new NoDefinitionInheritance());
+
+        var planet = data.Planets.Single(p => p.Id == "testPlanet");
+
+        Assert.Null(planet.SurfaceGravity);
+        Assert.Equal(Provenance.Unknown, planet.ProvenanceOf("surfaceGravity"));
+        Assert.Contains(data.Warnings, w => w.Code == "unknownSurfaceGravity");
+    }
+
     [Fact]
     public void ChainTerminatesRatherThanLoopingForever()
     {
