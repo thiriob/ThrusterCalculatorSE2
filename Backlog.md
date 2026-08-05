@@ -186,11 +186,19 @@ does nothing implies the app is using it. It belongs with this entry, not before
 **Consequence today:** none. Surface gravity is measured, sea-level air density is 1.0 regardless,
 and the sizing answer does not depend on either falloff curve.
 
-### B8 — Mixed thruster compositions
+### B8 — ~~Mixed thruster compositions~~ RESOLVED: same computation, no second feature
 
-Currently one loadout per thruster type. Mixed (atmospheric for lift-off plus ion for orbit) is a
-small integer optimisation over the same constraint the solver already evaluates, so it is an added
-function rather than a rewrite (Technic §5.6).
+**Closed.** `Core.Loadout` carries what the user has already placed and the solver sizes around it
+(Technic §5.1.1). **Nothing in it distinguishes families**, so a partial loadout of one thruster and
+a mixed-family loadout are the same arithmetic — "mixed types" needed no separate code path, and
+`MixingFamiliesIsTheSameComputation` asserts it.
+
+The v1 design decision that made this cheap was keeping the solver a pure function over a set of
+thruster types (Technic §5.6). It cost nothing then and paid here.
+
+What it exposed is that mixing is only half a feature without altitude: at a single height, mixing
+is a cost-and-mass trade. The reason to actually mix — different thrusters work at different
+heights — needs the climb (Roadmap v3).
 
 ### B9 — Check mode
 

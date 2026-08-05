@@ -327,6 +327,42 @@ Check: 18 × 287 136 = 5 168 448 N vs (500 000 + 18×464) × 9.81 = 4 986 933 N 
 Arithmetic, not iteration. Note `m` currently carries `Assumed` provenance, so **every
 configuration's range inherits it**.
 
+### 5.1.1 Sizing around a loadout — the same formula, generalised
+
+The configurator asks a different question: *given what I have already placed, what finishes the
+job?* It needs no new maths. With `m_p` the mass of the placed thrusters and `T_p` the thrust they
+already deliver here:
+
+```
+   n·T·E + T_p  ≥  R·g·(M + m_p + n·m)
+
+              R·g·(M + m_p) − T_p
+   n  ≥  ─────────────────────────────
+                 T·E − R·g·m
+```
+
+That is §5.1 with `M → M + m_p` and the shortfall reduced by thrust already provided. The
+denominator — the entire impossibility guard — is untouched. `Core.Loadout` carries the placed set,
+`SizingRequest.Placed` defaults to empty, and an empty loadout reproduces v1's numbers exactly
+(`AnEmptyLoadoutReproducesTheOriginalAnswer` asserts it, because if that drifts then every figure
+the app has ever shown was wrong in one direction).
+
+**Nothing here knows about families.** A partial loadout of one thruster type and a mix of several
+are the same computation, which is why mixed compositions needed no second feature (B8).
+
+Two things the generalisation forced into the open:
+
+- **`NetContributionNEach`** — the denominator, surfaced. It is what one more thruster *actually*
+  buys after its own weight raises the target. Without it on screen, adding a 100 kN thruster closes
+  the gap by ~95 kN and reads as broken arithmetic rather than as physics. It is also the sign test:
+  at or below zero no quantity ever works, and adding one makes the shortfall *worse*.
+- **The shortfall is clamped at zero.** An over-provisioned loadout needs *none* more, not a
+  negative number of them.
+
+`ThrusterSizer.Evaluate` returns the loadout's totals — thrust delivered, mass added, and the
+requirement *including* that mass. The requirement therefore rises as the loadout grows, which is
+precisely why a budget cannot be computed once and counted down.
+
 ### 5.3 Environmental effectiveness
 
 From `ThrustClassesConfiguration.def` (Research §3.3), per class, given air density `d`:
@@ -415,6 +451,27 @@ not a rewrite (Design §3.3).
 - **No logic in code-behind.** Views bind.
 - Calculations are closed-form arithmetic; recompute synchronously on property change. Only the
   producer subprocess is async, with progress.
+- **No charting package.** The climb profile draws itself with `DrawingContext` (`ClimbProfileChart`).
+  Avalonia ships no chart control; LiveCharts, ScottPlot and OxyPlot all exist, and none is worth a
+  dependency for one curve with two reference lines. Revisit if zoom, hover-readout or legends are
+  ever wanted.
+
+### 6.1 Numeric input: three rules, learned the hard way
+
+Every numeric field goes through `MassInput` or `CountInput` rather than a bare `NumericUpDown` with
+attributes set per usage. Ad-hoc configuration is how all three of these got missed, each on *every*
+field at once:
+
+| | |
+|---|---|
+| **Bound properties must be nullable** | Clearing the text writes `null`. Bound to a non-nullable `int`/`double` the conversion throws and Avalonia paints `System.InvalidCastException` **into the box**. Clearing a number to retype it is ordinary, so the model has to admit the empty state |
+| **`ClipValueToMinMax = true`** | Defaults to **false**, so out-of-range input is neither clamped nor rejected — typing `345678` into a 0–9999 field left it reading `3456` |
+| **Coerce on `LostFocus`, not on change** | A blank box left behind reads as broken, but coercing the moment the text empties fights the keystroke that produced it. Resolve on the way out |
+
+The first two are silent: nothing logs, nothing fails a test, and the field simply misbehaves. The
+view model's own coercion is a belt-and-braces second line, not the fix — the control owns its rules.
+
+**Avalonia has no `OnLostFocus` override to match**; subscribe to the `LostFocus` event instead.
 
 ---
 

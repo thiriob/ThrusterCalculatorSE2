@@ -135,8 +135,32 @@ Two things are folded rather than dropped:
 - **Headroom moves to the row's tooltip.** It is derivable from the covered range, and the table
   earns its readability by carrying only what you actually choose between.
 
-**Long term: mixed compositions** — e.g. atmospheric for lift-off plus ion for orbit. Deferred, but
-the core must be designed so a mixed solver is an added function, not a rewrite (Technic §4).
+### 3.3.2 The configurator, and what the tables became (v2)
+
+The table above was v1's whole answer. In v2 it stops being *the* answer and becomes the **rule of
+thumb you check against**, because the app now lets you place thrusters yourself and tells you what
+is still missing.
+
+Three columns: **inputs · configurator · reference.**
+
+- **The configurator** lists every buildable thruster with a count, grouped by family, two per line
+  with a rule between the columns. Each row carries what one more of these *actually buys* — its
+  thrust less the extra requirement its own weight creates — because the shortfall does not fall by
+  a thruster's rated thrust, and a user watching it move by the "wrong" amount reads that as a bug.
+  A running total sits at the foot of the same box: bar, thrusters placed, mass added, and the
+  thrust still to find.
+- **Two reference tables**, which are one component rendered twice with a different requirement fed
+  in: *"if you use one type"* against a bare ship, and *"to cover what's left"* against the shortfall
+  the loadout leaves. The first deliberately ignores what is placed — that is what makes it a
+  reference.
+
+**Mixed families come free.** Nothing in the solver distinguishes them (Technic §5.1.1), so placing
+two sizes of atmospheric and placing an atmospheric beside an ion are the same operation. What v2
+*cannot* yet show is the reason to mix, which is altitude (Roadmap v3).
+
+~~**Long term: mixed compositions**~~ — **built in v2** (§3.3.2, Backlog B8). The v1 requirement that
+the core be designed so a mixed solver was an added function rather than a rewrite is what made it
+cheap: it turned out to need no new function at all, only a term in the existing formula.
 
 ---
 
@@ -285,33 +309,36 @@ that comparison (Research §3).
 
 ## 5. Layout sketch
 
-Single window, live recompute — not a wizard.
+Single window, live recompute — not a wizard. Three columns since v2: what you know, what you are
+building, what to compare it against.
 
 ```
-┌───────────────────────────────────────────────────────────────────────────────┐
-│  ThrusterCalculator SE2                                                          │
-├─────────────────────────────┬─────────────────────────────────────────────────┤
-│  DEPARTURE                  │   REQUIRED THRUST (up, TWR 1.0)                  │
-│  Planet  [ Verdure      ▾]  │                                                  │
-│  Gravity [ 9.81 ] m/s² ⚠    │     empty    3 920 kN     half   4 610 kN        │
-│  TWR     [ 1.0  ]           │     full     5 300 kN                            │
-│  ─────────────────────────  │                                                  │
-│  SHIP MASS                  │   CONFIGURATIONS  (full load)                    │
-│  ( ) I know it: [       ]kg │   ┌──────────────────────────────────────────┐   │
-│  (•) Work it out            │   │ Atmospheric 2.5 m  19 × +8,816 kg  12 MW │   │
-│      Hull   [300,000] kg ⚠  │   │   covers 528,000–546,000 kg · 3.4% head  │   │
-│      Cargo 250 [   4 ]      │   │ Atmospheric 5 m     4 × +6,207 kg  10 MW │   │
-│      Cargo 750 [   0 ]      │   │   covers 512,000–589,000 kg · 12% head   │   │
-│      H2 Tank 500 [ 2 ]      │   │ Hydrogen 2.5 m      3 × +3,015 kg 36 L/s │   │
-│  ─────────────────────────  │   │   covers 501,000–581,000 kg · 14% head   │   │
-│  Dry      300,000 kg        │   │ Ion 1.5 m          ✕ no thrust in atmo    │   │
-│  Cargo    268,800 kg (full) │   └──────────────────────────────────────────┘   │
-│  Tanks      2,000 kg (block)│                                                  │
-│  Total    570,800 kg        │   ⓘ Assumes no thrusters currently installed.    │
-│                             │   ⚠ = Assumed value — click to edit              │
-├─────────────────────────────┴─────────────────────────────────────────────────┤
-│ Game data: build 2.3.0.2798 · 17,172 defs · read 14:22 · [Rebuild]            │
-└───────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│  ThrusterCalculator SE2                                                                 │
+├──────────────────┬───────────────────────────────────┬─────────────────────────────────┤
+│ DEPARTURE        │ LOAD    empty / half / FULL       │ IF YOU USE ONE TYPE · FULL LOAD │
+│  Planet [Verdure]│  300,000   434,400   568,800 kg   │            No.  ADDED MASS  TWR │
+│  Gravity  9.81   │  Needs 5,580 kN at lift-off       │  Atmospheric                    │
+│   from game data │                                   │    1 m     143   +10,362 kg 1.00│
+│  [ ] Custom      │ CONFIGURATOR             [Clear]  │    2.5 m    20    +9,282 kg 1.03│
+│  ────────────    │  Atmospheric                      │    5 m       4    +6,207 kg 1.22│
+│ THRUST TARGET    │   1 m   +39 kN  [ 4 ]│ 2.5 m  ... │  Hydrogen                       │
+│  TWR    [ 1.5 ]  │   5 m +1,494 kN [ 1 ]│ 10 m   ... │    0.5 m    93    +3,069 kg 1.01│
+│                  │  Hydrogen                         │  ▸ 4 not usable here            │
+│ SHIP MASS        │   0.5 m  +60 kN [ 0 ]│ 2 m    ... │                                 │
+│  (•) I know it   │  ──────────────────────────────── │ TO COVER WHAT'S LEFT            │
+│   [ 500,000 ] kg │  ████████████░░░░░░               │  Atmospheric                    │
+│  ( ) From storage│  5 placed · +12,4 t · 3,1/5,6 MN  │    2.5 m     9    +4,176 kg     │
+│  ─────────────   │  2,480 kN still needed            │    5 m       2    +3,104 kg     │
+│  Total 500,000 kg│                                   │                                 │
+│                  │ CLIMB PROFILE          [MOCKUP]   │                                 │
+│                  │  space ┤        ╱                 │                                 │
+│                  │   edge ┤   ╲___╱                  │                                 │
+│                  │ ground ┤────●─────                │                                 │
+│                  │        0   spare accel  m/s²      │                                 │
+├──────────────────┴───────────────────────────────────┴─────────────────────────────────┤
+│ Game data: build 2.3.0.2788 · 12 thrusters · extracted 21:32   [Rebuild]                │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Notes on the sketch:

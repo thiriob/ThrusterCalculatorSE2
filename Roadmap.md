@@ -83,10 +83,20 @@ actual reason to mix is that different thrusters work at different heights.
 
 - **A ceiling**, as a plain figure: *"reaches the atmosphere edge — stalls there"*. No new inputs.
   The same honesty as the covered-mass range: not a yes/no, but the boundary of what a loadout buys.
-- **A climb profile**, thrust-to-weight against altitude, **altitude on the vertical axis** because
-  the reader is following a climb. That puts TWR horizontal, which makes the 1.0 threshold a
-  vertical line — everything left of it cannot climb, and the crossing height is the ceiling.
-  Mocked up in the app today, drawn natively with `DrawingContext` (no charting package).
+- **A climb profile**, **altitude on the vertical axis** because the reader is following a climb.
+  Mocked up in the app today, drawn natively with `DrawingContext` (no charting package — Avalonia
+  has none, and one curve does not justify LiveCharts or ScottPlot).
+- **Spare acceleration, not thrust-to-weight**, on the horizontal axis. TWR is the right question
+  beside a planet and a meaningless one away from it: weight tends to zero out of the gravity well,
+  so *every* ship's ratio runs to infinity and a nimble ship reads identically to a sluggish one.
+  Subtracting gravity instead of dividing by it — `thrust ÷ mass − gravity`, in m/s² — stays finite
+  and keeps meaning something: zero is the hard floor, a dip below it is the stall, and the value it
+  settles at up top is exactly how briskly the ship accelerates in space.
+  **Consequence:** the target margin becomes a *curve*, not a line, because a target of 1.5 means
+  "half a gravity spare" and half a gravity shrinks as you climb.
+
+TWR remains the right *input* — "how much margin do I want at lift-off" is a ratio question — so the
+spinner stays. Input and output simply want different units here.
 - **Named heights, not radii.** Ground / atmosphere edge / space. Planet radii mean nothing to a
   player, and naming them sidesteps the radius problem below entirely.
 
