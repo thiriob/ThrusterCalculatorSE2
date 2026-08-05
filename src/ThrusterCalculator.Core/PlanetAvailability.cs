@@ -3,16 +3,32 @@ using System.Globalization;
 namespace ThrusterCalculator.Core;
 
 /// <summary>Whether a planet belongs to the build you are actually playing.</summary>
+/// <remarks>
+/// Declaration order is the order the UI groups them in.
+/// </remarks>
 public enum PlanetAvailability
 {
     /// <summary>Authored for the milestone this build ships — reachable in game.</summary>
     Playable,
 
-    /// <summary>Ships as data but belongs to an older or unreleased milestone.</summary>
-    Other,
-
     /// <summary>Not milestone-versioned at all: added by a mod, or hand-written into the config.</summary>
     Custom,
+
+    /// <summary>
+    /// From a milestone the game has moved past.
+    /// </summary>
+    /// <remarks>
+    /// In the current build this is where the generic archetypes land — EarthLike, MarsLike,
+    /// WaterPlanet, Testerran — together with Geomeles. <b>That grouping is a consequence, not an
+    /// intent.</b> Nothing in the data marks a planet as a "type" rather than a place: EarthLike
+    /// ships more files, more biomes and more spawn data than Caligo does, and every planet is the
+    /// same kind of definition with a preview image. Separating archetypes from real worlds would
+    /// mean hardcoding four names, so the heading says what is actually known — an older milestone.
+    /// </remarks>
+    Older,
+
+    /// <summary>From a milestone newer than this build: data ships ahead of the content.</summary>
+    Upcoming,
 }
 
 /// <summary>
@@ -66,16 +82,45 @@ public static class PlanetAvailabilityRules
     {
         // No milestone at all means the planet did not come from Keen's versioned folders — a mod,
         // or a hand-edited config. Neither claim about the shipped roster applies to it.
-        if (string.IsNullOrWhiteSpace(planetMilestone)) return PlanetAvailability.Custom;
-
-        var current = MilestoneOfBuild(gameBuild);
+        var planet = Parse(planetMilestone);
+        var current = Parse(MilestoneOfBuild(gameBuild));
 
         // An unreadable build string is not evidence that every planet is legacy. Saying "we don't
-        // know" beats confidently filing the whole roster under Other.
-        if (current is null) return PlanetAvailability.Custom;
+        // know" beats confidently demoting the whole roster.
+        if (planet is null || current is null) return PlanetAvailability.Custom;
 
-        return string.Equals(planetMilestone, current, StringComparison.OrdinalIgnoreCase)
-            ? PlanetAvailability.Playable
-            : PlanetAvailability.Other;
+        var order = planet.Value.CompareTo(current.Value);
+
+        return order switch
+        {
+            0 => PlanetAvailability.Playable,
+            < 0 => PlanetAvailability.Older,
+            _ => PlanetAvailability.Upcoming,
+        };
+    }
+
+    /// <summary>
+    /// A milestone as a comparable pair, e.g. <c>"VS2_3"</c> → <c>(2, 3)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Parsed rather than string-compared: the shipped milestones happen to sort correctly as text
+    /// today, but <c>VS2_10</c> would sort before <c>VS2_2</c> and quietly file a current planet
+    /// under the wrong heading.
+    /// </remarks>
+    private static (int Major, int Minor)? Parse(string? milestone)
+    {
+        if (string.IsNullOrWhiteSpace(milestone)
+            || !milestone.StartsWith("VS", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var parts = milestone[2..].Split('_');
+
+        return parts.Length == 2
+               && int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var major)
+               && int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var minor)
+            ? (major, minor)
+            : null;
     }
 }

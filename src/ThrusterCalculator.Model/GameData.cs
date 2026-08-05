@@ -82,6 +82,21 @@ public sealed record ExtractionWarning
 
     public required string Detail { get; init; }
 
+    /// <summary>
+    /// The id of the entity this concerns — a planet, thruster, container or tank.
+    /// </summary>
+    /// <remarks>
+    /// Lets a consumer show a warning where it actually matters rather than as a wall of text: the
+    /// note about MarsLike's implausible atmosphere belongs beside MarsLike, at the moment you pick
+    /// it. Set explicitly by the producer; matching a warning to an entity by looking for its name
+    /// inside <see cref="Detail"/> would be exactly the sort of string heuristic this project keeps
+    /// getting burned by.
+    /// <para>
+    /// <c>null</c> for warnings about the extraction as a whole rather than one entity.
+    /// </para>
+    /// </remarks>
+    public string? Subject { get; init; }
+
     /// <summary>Source file, relative to the game's content root, when one applies.</summary>
     public string? File { get; init; }
 }

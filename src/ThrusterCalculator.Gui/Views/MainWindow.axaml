@@ -30,6 +30,11 @@
         <Style Selector="TextBlock.muted">
             <Setter Property="Opacity" Value="0.35" />
         </Style>
+        <Style Selector="TextBlock.groupHeader">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Opacity" Value="0.6" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
         <Style Selector="Border.card">
             <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundListLowBrush}" />
             <Setter Property="CornerRadius" Value="6" />
@@ -72,9 +77,41 @@
             </TextBlock>
         </Border>
 
+        <!-- Data panel (Design §4.5.1): thin and unglamorous, desktop-only, and it degrades to an
+             explanation rather than a dead button when tc.exe or the game is absent. -->
         <Border DockPanel.Dock="Bottom" Padding="12,6"
                 Background="{DynamicResource SystemControlBackgroundListLowBrush}">
-            <TextBlock Classes="dim" Text="{Binding DataStatus}" />
+            <StackPanel Spacing="4">
+                <Grid ColumnDefinitions="*,Auto,Auto">
+                    <TextBlock Grid.Column="0" Classes="dim" VerticalAlignment="Center"
+                               Text="{Binding DataStatus}" />
+                    <Button Grid.Column="1" Content="Rebuild" Margin="8,0,0,0"
+                            IsVisible="{Binding CanRebuild}"
+                            IsEnabled="{Binding !IsRebuilding}"
+                            Command="{Binding RebuildCommand}" />
+                    <Button Grid.Column="2" Content="Cancel" Margin="6,0,0,0"
+                            IsVisible="{Binding IsRebuilding}"
+                            Command="{Binding CancelRebuildCommand}" />
+                </Grid>
+
+                <!-- Patch day is the exact scenario this app exists for, so stale data must never
+                     be served quietly. -->
+                <TextBlock Classes="dim" TextWrapping="Wrap" Foreground="#D08A3E"
+                           IsVisible="{Binding IsStale}"
+                           Text="{Binding StalenessMessage}" />
+
+                <TextBlock Classes="dim" TextWrapping="Wrap"
+                           IsVisible="{Binding DataMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                           Text="{Binding DataMessage}" />
+
+                <TextBlock Classes="dim" TextWrapping="Wrap"
+                           IsVisible="{Binding ShowRebuildUnavailable}"
+                           Text="{Binding RebuildUnavailableMessage}" />
+
+                <TextBlock Classes="dim" TextWrapping="Wrap"
+                           IsVisible="{Binding HasExtractionWarnings}"
+                           Text="{Binding ExtractionWarningSummary}" />
+            </StackPanel>
         </Border>
 
         <Grid ColumnDefinitions="380,*" Margin="12">
@@ -93,9 +130,23 @@
                             <Grid ColumnDefinitions="78,*,Auto">
                                 <TextBlock Grid.Column="0" Text="Planet" VerticalAlignment="Center" />
                                 <ComboBox Grid.Column="1" Grid.ColumnSpan="2" Margin="8,0,0,0"
-                                          ItemsSource="{Binding Planets}"
-                                          SelectedItem="{Binding SelectedPlanet}"
-                                          HorizontalAlignment="Stretch" />
+                                          ItemsSource="{Binding PlanetItems}"
+                                          SelectedItem="{Binding SelectedPlanetItem}"
+                                          HorizontalAlignment="Stretch">
+                                    <!-- Headings are rows, not selectable ones. The view model
+                                         rejects them too, since a failed style binding is silent. -->
+                                    <ComboBox.Styles>
+                                        <Style Selector="ComboBoxItem" x:DataType="vm:PlanetListItem">
+                                            <Setter Property="IsEnabled" Value="{Binding IsSelectable}" />
+                                        </Style>
+                                    </ComboBox.Styles>
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:PlanetListItem">
+                                            <TextBlock Text="{Binding Label}"
+                                                       Classes.groupHeader="{Binding !IsSelectable}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
                             </Grid>
                             <!-- The gravity actually in force, shown as a figure rather than in
                                  the entry box. Binding the only visible field to the override made
@@ -115,6 +166,13 @@
 
                             <TextBlock Classes="dim" TextWrapping="Wrap"
                                        Text="{Binding GravityNote}" />
+
+                            <!-- The producer's own warnings, against the planet they concern.
+                                 Schema §6: a degraded extraction has to be visible, or the app
+                                 serves confident wrong answers. -->
+                            <TextBlock Classes="dim" TextWrapping="Wrap" Foreground="#D08A3E"
+                                       IsVisible="{Binding HasPlanetWarning}"
+                                       Text="{Binding PlanetWarningText}" />
 
                             <!-- Forced on, and locked, when the planet states no gravity of its
                                  own: there is nothing to fall back to. -->
@@ -253,11 +311,25 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Classes="h" Text="CONFIGURATIONS" />
+                    <TextBlock Classes="h" Text="{Binding ConfigurationsHeading}" />
 
-                    <!-- Column header. Widths are repeated verbatim in the row template below;
-                         they must stay in step or the table stops being a table. -->
-                    <Grid ColumnDefinitions="*,52,104,58,124,88" Margin="12,0,12,4">
+                    <!-- Column header. The definitions are repeated verbatim in the row template
+                         below and must stay in step, or the table stops being a table.
+
+                         The name column is starred so it shrinks on a narrow window, but capped so
+                         it cannot sprawl: fullscreened, an uncapped star column pushed the counts
+                         hundreds of pixels away from the sizes they belong to. The trailing star
+                         absorbs whatever is left over instead. -->
+                    <Grid Margin="12,0,12,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" MaxWidth="200" />
+                            <ColumnDefinition Width="52" />
+                            <ColumnDefinition Width="104" />
+                            <ColumnDefinition Width="58" />
+                            <ColumnDefinition Width="124" />
+                            <ColumnDefinition Width="88" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="1" Classes="col" Text="COUNT" />
                         <TextBlock Grid.Column="2" Classes="col" Text="ADDED MASS" />
                         <TextBlock Grid.Column="3" Classes="col" Text="TWR" />
@@ -281,9 +353,17 @@
                                         <ItemsControl ItemsSource="{Binding Rows}">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate x:DataType="vm:ThrusterResultViewModel">
-                                                    <Grid ColumnDefinitions="*,52,104,58,124,88"
-                                                          Margin="12,0,12,0" Height="26"
+                                                    <Grid Margin="12,0,12,0" Height="26"
                                                           ToolTip.Tip="{Binding DetailText}">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" MaxWidth="200" />
+                                                            <ColumnDefinition Width="52" />
+                                                            <ColumnDefinition Width="104" />
+                                                            <ColumnDefinition Width="58" />
+                                                            <ColumnDefinition Width="124" />
+                                                            <ColumnDefinition Width="88" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
                                                         <TextBlock Grid.Column="0" Classes="cell"
                                                                    Text="{Binding SizeText}"
                                                                    HorizontalAlignment="Left" />

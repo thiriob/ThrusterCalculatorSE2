@@ -3,7 +3,10 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using ThrusterCalculator.Core;
 using ThrusterCalculator.Core.Sizing;
 using ThrusterCalculator.Gui.Services;
@@ -70,6 +73,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OriginDescription = config.Description;
 
         Planets = new ObservableCollection<PlanetOption>(BuildPlanetOptions());
+        PlanetItems = new ObservableCollection<PlanetListItem>(BuildPlanetItems());
         Containers = new ObservableCollection<StorageRowViewModel>(BuildStorage(isTank: false));
         Tanks = new ObservableCollection<StorageRowViewModel>(BuildStorage(isTank: true));
 
@@ -114,11 +118,122 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public bool IsSampleData => Origin == ConfigOrigin.Sample;
 
+    // ── data panel (Design §4.5.1) ────────────────────────────────────────────────────────────
+
+    /// <summary>Whether a rebuild is possible at all: desktop build, producer bundled.</summary>
+    public bool CanRebuild => ProducerProcess.IsAvailable;
+
+    /// <summary>
+    /// Why the button is missing, when it is.
+    /// </summary>
+    /// <remarks>
+    /// Design §4.5.1 asks for an explanation rather than a dead button — and rather than silence.
+    /// A user who cannot see why rebuilding is unavailable has no way to reach the same outcome;
+    /// naming the command they can run themselves does. (Absence with no explanation is the *web*
+    /// build's behaviour: different host, different capabilities.)
+    /// </remarks>
+    public string RebuildUnavailableMessage => CanRebuild
+        ? string.Empty
+        : $"{ProducerProcess.ExecutableName} is not bundled with this build — run "
+          + $"'tc extract --out {ConfigSource.FileName}' and put the result beside the app.";
+
+    public bool ShowRebuildUnavailable => !CanRebuild;
+
+    [ObservableProperty] private bool _isRebuilding;
+
+    [ObservableProperty] private string _dataMessage = string.Empty;
+
+    /// <summary>
+    /// Set once the producer says the install no longer matches the loaded config.
+    /// </summary>
+    /// <remarks>
+    /// The whole premise is that the game moves and the numbers move with it (Design P1), so
+    /// silently serving a config from before a patch is the one failure that undermines everything
+    /// else. The check compares the config's <c>sourceFingerprint</c> against the install's current
+    /// one — a directory enumeration, not 17k reads, so it is cheap enough to run on every launch.
+    /// </remarks>
+    [ObservableProperty] private bool _isStale;
+
+    [ObservableProperty] private string _stalenessMessage = string.Empty;
+
+    private CancellationTokenSource? _rebuild;
+
+    /// <summary>Compares the loaded config against the installed game, in the background.</summary>
+    public async Task CheckStalenessAsync()
+    {
+        if (!CanRebuild || Origin != ConfigOrigin.Extracted) return;
+
+        var install = await ProducerProcess.ReadInstallAsync(CancellationToken.None);
+
+        // No install, or a producer that could not answer: not evidence of staleness. Saying
+        // nothing beats crying wolf on a machine that simply has no game on it.
+        if (install is null || install.Fingerprint.Length == 0) return;
+
+        if (string.Equals(install.Fingerprint, _data.Source.Fingerprint, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        IsStale = true;
+        StalenessMessage = string.Equals(install.GameBuild, _data.Source.GameBuild, StringComparison.Ordinal)
+            ? "Your game's files have changed since this data was extracted."
+            : $"Your game is now build {install.GameBuild}; this data is from "
+              + $"{_data.Source.GameBuild}.";
+    }
+
+    [RelayCommand]
+    private async Task RebuildAsync()
+    {
+        if (IsRebuilding) return;
+
+        _rebuild = new CancellationTokenSource();
+        IsRebuilding = true;
+        DataMessage = "Reading your installed game…";
+
+        try
+        {
+            var result = await ProducerProcess.ExtractAsync(_rebuild.Token);
+            DataMessage = result.Message;
+
+            if (result.Succeeded)
+            {
+                IsStale = false;
+                StalenessMessage = string.Empty;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            DataMessage = "Cancelled. The previous data is untouched.";
+        }
+        finally
+        {
+            IsRebuilding = false;
+            _rebuild?.Dispose();
+            _rebuild = null;
+        }
+    }
+
+    [RelayCommand]
+    private void CancelRebuild() => _rebuild?.Cancel();
+
     public string DataStatus =>
         $"Game build {_data.Source.GameBuild} · {_data.Thrusters.Count} thrusters · "
         + $"extracted {_data.Generator.ExtractedAt.LocalDateTime:yyyy-MM-dd HH:mm}";
 
     public ObservableCollection<PlanetOption> Planets { get; }
+
+    /// <summary>The dropdown's rows, headings included.</summary>
+    public ObservableCollection<PlanetListItem> PlanetItems { get; }
+
+    /// <summary>
+    /// The dropdown's selection, kept in step with <see cref="SelectedPlanet"/>.
+    /// </summary>
+    /// <remarks>
+    /// Selecting a heading is rejected here and the previous choice restored, independently of the
+    /// style that disables heading containers. Two guards because a failed binding in Avalonia is
+    /// silent, and the failure mode — a heading as the departure planet — empties the results.
+    /// </remarks>
+    [ObservableProperty] private PlanetListItem? _selectedPlanetItem;
 
     public ObservableCollection<StorageRowViewModel> Containers { get; }
 
@@ -163,6 +278,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ObservableCollection<LoadSummary> Loads { get; } = [];
 
     public IReadOnlyList<string> PresetNames { get; } = [.. Presets.Select(p => p.Name)];
+
+    /// <summary>
+    /// The results heading, naming the load the figures are for.
+    /// </summary>
+    /// <remarks>
+    /// In storage mode three load masses are on screen and the configurations silently use one of
+    /// them. Saying which removes a real misread — sizing for an empty ship and believing it was
+    /// the full one is precisely the failure this app exists to prevent (Design §3.2).
+    /// </remarks>
+    public string ConfigurationsHeading => IsStorageMode
+        ? $"CONFIGURATIONS · {Presets[Math.Clamp(SelectedPresetIndex, 0, Presets.Length - 1)].Name.ToUpperInvariant()} LOAD"
+        : "CONFIGURATIONS";
 
     [ObservableProperty] private string _shipMassText = string.Empty;
     [ObservableProperty] private string _requirementText = string.Empty;
@@ -260,6 +387,53 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// and therefore different surface gravity, so the app has to be clear that its number is for
     /// a default-sized world and point at the reading that settles it.
     /// </remarks>
+    /// <summary>
+    /// Extraction warnings about the selected planet, shown where they bite.
+    /// </summary>
+    /// <remarks>
+    /// The producer records these faithfully and the config carries them; until now the app dropped
+    /// them on the floor. Schema §6 calls surfacing them "the single cheapest defence against the
+    /// failure mode that actually matters here" — a degraded extraction producing confident wrong
+    /// answers. Shown against the planet rather than in a list, because that is the moment the
+    /// warning changes what you should believe.
+    /// </remarks>
+    public string PlanetWarningText
+    {
+        get
+        {
+            if (SelectedPlanet is null) return string.Empty;
+
+            var details = _data.Warnings
+                .Where(w => string.Equals(w.Subject, SelectedPlanet.Id, StringComparison.Ordinal))
+                .Select(w => w.Detail)
+                .ToList();
+
+            return details.Count == 0 ? string.Empty : "⚠ " + string.Join("  ", details);
+        }
+    }
+
+    public bool HasPlanetWarning => PlanetWarningText.Length > 0;
+
+    /// <summary>Everything the extraction flagged that is not about one entity we show.</summary>
+    public string ExtractionWarningSummary
+    {
+        get
+        {
+            var count = _data.Warnings.Count;
+            if (count == 0) return string.Empty;
+
+            var codes = _data.Warnings
+                .Select(w => w.Code)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(c => c, StringComparer.Ordinal);
+
+            return $"{count} extraction note{(count == 1 ? string.Empty : "s")}: "
+                   + string.Join(", ", codes);
+        }
+    }
+
+    public bool HasExtractionWarnings => _data.Warnings.Count > 0;
+
     public string GravityNote
     {
         // Order matters. When nothing is known the override is forced on, so testing for "custom"
@@ -283,8 +457,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    partial void OnSelectedPlanetItemChanged(PlanetListItem? value)
+    {
+        if (value is null) return;
+
+        if (value.Planet is null)
+        {
+            // A heading. Put the selection back where it was rather than leaving the app with no
+            // planet — the user clicked a divider, which should read as "nothing happened".
+            SelectedPlanetItem = PlanetItems.FirstOrDefault(i => i.Planet == SelectedPlanet);
+            return;
+        }
+
+        SelectedPlanet = value.Planet;
+    }
+
     partial void OnSelectedPlanetChanged(PlanetOption? value)
     {
+        // Keep the dropdown in step when the planet is set directly, as tests and settings do.
+        SelectedPlanetItem = PlanetItems.FirstOrDefault(i => i.Planet == value);
+
         // Drop the override when the planet changes, so picking a planet visibly changes the
         // gravity in force. Leaving it on made the app look broken: the number never moved, and
         // nothing on screen explained that a custom value was quietly winning.
@@ -318,6 +510,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(GravityIsCustom));
         OnPropertyChanged(nameof(GravityIsAssumed));
         OnPropertyChanged(nameof(GravityNote));
+        OnPropertyChanged(nameof(PlanetWarningText));
+        OnPropertyChanged(nameof(HasPlanetWarning));
     }
 
     partial void OnTargetThrustToWeightChanged(double value) => Recalculate();
@@ -326,13 +520,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     partial void OnHullMassKgChanged(double value) => Recalculate();
 
-    partial void OnSelectedPresetIndexChanged(int value) => Recalculate();
+    partial void OnSelectedPresetIndexChanged(int value)
+    {
+        OnPropertyChanged(nameof(ConfigurationsHeading));
+        Recalculate();
+    }
 
     partial void OnMassEntryModeChanged(MassEntryMode value)
     {
         // Both, or the button being deselected keeps its filled dot.
         OnPropertyChanged(nameof(IsDirectMode));
         OnPropertyChanged(nameof(IsStorageMode));
+        OnPropertyChanged(nameof(ConfigurationsHeading));
         Recalculate();
     }
 
@@ -503,24 +702,57 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ? name[8..]
             : name;
 
+    /// <summary>Heading text per group, in the order the enum declares them.</summary>
+    private static string HeadingFor(PlanetAvailability availability) => availability switch
+    {
+        PlanetAvailability.Playable => "—— Playable ——",
+        PlanetAvailability.Custom => "—— Custom ——",
+        PlanetAvailability.Older => "—— Older milestones ——",
+        _ => "—— Not in this build yet ——",
+    };
+
+    /// <summary>
+    /// The dropdown's rows: a heading per non-empty group, then its planets.
+    /// </summary>
+    /// <remarks>
+    /// Headings appear only for groups that have members, so an install with no modded planets
+    /// does not show an empty "Custom" divider.
+    /// </remarks>
+    private IEnumerable<PlanetListItem> BuildPlanetItems()
+    {
+        foreach (var group in Planets
+                     .GroupBy(p => p.Availability)
+                     .OrderBy(g => g.Key))
+        {
+            yield return new PlanetListItem { Label = HeadingFor(group.Key) };
+
+            foreach (var planet in group)
+            {
+                yield return new PlanetListItem { Planet = planet, Label = planet.Name };
+            }
+        }
+    }
+
     private IEnumerable<PlanetOption> BuildPlanetOptions()
     {
-        // Playable planets first: only Verdure and Kemik are reachable in the current build, so the
-        // common case should not need scrolling. The rest stay listed — during alpha "does this
-        // exist yet?" is a real question.
-        var playable = new[] { "verdure", "kemik" };
+        // Which planets are reachable is derived, never listed: a planet is playable when its
+        // milestone matches the milestone of the build this config came from. An earlier version
+        // hardcoded {verdure, kemik} here, which was a second source of truth and — by the time
+        // anyone checked — wrong, since Caligo and Palatine are reachable too.
+        var build = _data.Source.GameBuild;
 
         return _data.Planets
             .Select(p => new PlanetOption
             {
                 Id = p.Id,
                 Name = p.Name,
+                Availability = PlanetAvailabilityRules.Classify(p.Milestone, build),
 
                 SurfaceGravity = p.SurfaceGravity,
                 GravityIsAssumed = p.ProvenanceOf("surfaceGravity") != Provenance.Measured,
                 Atmosphere = p.Atmosphere,
             })
-            .OrderByDescending(p => Array.IndexOf(playable, p.Id) >= 0)
+            .OrderBy(p => p.Availability)
             .ThenBy(p => p.Name, StringComparer.Ordinal);
     }
 
@@ -552,6 +784,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 }
 
+/// <summary>
+/// One row of the planet dropdown: either a group heading or a planet.
+/// </summary>
+/// <remarks>
+/// A heading is not selectable. The <c>ComboBox</c> style disables its container, and the view
+/// model bounces the selection back as well — a style that silently failed to apply would
+/// otherwise let a heading become the departure planet, which has no gravity and no atmosphere and
+/// would empty the results panel. Bindings fail quietly in Avalonia, so the guard is not paranoia.
+/// </remarks>
+public sealed class PlanetListItem
+{
+    public PlanetOption? Planet { get; init; }
+
+    public required string Label { get; init; }
+
+    public bool IsSelectable => Planet is not null;
+
+    public override string ToString() => Label;
+}
+
 /// <summary>A selectable departure planet.</summary>
 public sealed class PlanetOption
 {
@@ -560,6 +812,9 @@ public sealed class PlanetOption
     public required string Name { get; init; }
 
     public double? SurfaceGravity { get; init; }
+
+    /// <summary>Which group this planet is listed under.</summary>
+    public PlanetAvailability Availability { get; init; }
 
     public bool GravityIsAssumed { get; init; }
 

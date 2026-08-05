@@ -300,16 +300,110 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
-    public void PlayablePlanetsComeFirst()
+    public void PlanetsAreOrderedByAvailabilityThenName()
     {
-        // Only Verdure and Kemik are reachable in the current build, so they should not need
-        // scrolling for. The sample has neither, so this checks the ordering is at least stable.
+        // Playable first, so the common case needs no scrolling. Derived from each planet's
+        // milestone rather than a hardcoded list of names.
         var vm = Create();
 
-        Assert.Equal(vm.Planets.OrderByDescending(p => p.Id is "verdure" or "kemik")
+        Assert.Equal(vm.Planets.OrderBy(p => p.Availability)
                                .ThenBy(p => p.Name, StringComparer.Ordinal)
                                .Select(p => p.Id),
                      vm.Planets.Select(p => p.Id));
+    }
+
+    [Fact]
+    public void TheDropdownCarriesAHeadingForEachNonEmptyGroup()
+    {
+        var vm = Create();
+
+        var headings = vm.PlanetItems.Where(i => !i.IsSelectable).ToList();
+        var planets = vm.PlanetItems.Where(i => i.IsSelectable).ToList();
+
+        // Every planet appears exactly once, and no heading exists without members.
+        Assert.Equal(vm.Planets.Count, planets.Count);
+        Assert.Equal(vm.Planets.Select(p => p.Id), planets.Select(i => i.Planet!.Id));
+        Assert.Equal(vm.Planets.Select(p => p.Availability).Distinct().Count(), headings.Count);
+
+        // A heading always precedes the planets it introduces.
+        Assert.False(vm.PlanetItems[0].IsSelectable);
+    }
+
+    [Fact]
+    public void SelectingAHeadingIsRejectedRatherThanEmptyingTheApp()
+    {
+        // The container style disables headings, but a failed binding is silent in Avalonia and
+        // the failure mode is a departure "planet" with no gravity and no results.
+        var vm = Create();
+        var before = vm.SelectedPlanet;
+
+        vm.SelectedPlanetItem = vm.PlanetItems.First(i => !i.IsSelectable);
+
+        Assert.Same(before, vm.SelectedPlanet);
+        Assert.NotNull(vm.SelectedPlanetItem);
+        Assert.Same(before, vm.SelectedPlanetItem!.Planet);
+        Assert.NotEmpty(vm.Results);
+    }
+
+    [Fact]
+    public void SettingThePlanetDirectlyMovesTheDropdown()
+    {
+        var vm = Create();
+        var target = vm.Planets.Last();
+
+        vm.SelectedPlanet = target;
+
+        Assert.Same(target, vm.SelectedPlanetItem?.Planet);
+    }
+
+    // ── warnings and headings ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TheResultsHeadingNamesTheLoadItIsFor()
+    {
+        // Three load masses on screen and one set of configurations: which one they are for has to
+        // be stated, or sizing for an empty ship reads as sizing for a full one.
+        var vm = Create();
+
+        vm.MassEntryMode = MassEntryMode.Direct;
+        Assert.Equal("CONFIGURATIONS", vm.ConfigurationsHeading);
+
+        vm.MassEntryMode = MassEntryMode.Storage;
+        vm.SelectedPresetIndex = 0;
+        Assert.Contains("EMPTY", vm.ConfigurationsHeading, StringComparison.Ordinal);
+
+        vm.SelectedPresetIndex = 2;
+        Assert.Contains("FULL", vm.ConfigurationsHeading, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExtractionWarningsAreSurfacedRatherThanDropped()
+    {
+        // Schema §6 calls this the cheapest defence against a degraded extraction producing
+        // confident wrong answers. The producer records them; the app used to ignore them.
+        var vm = Create();
+
+        Assert.True(vm.HasExtractionWarnings);
+        Assert.Contains("note", vm.ExtractionWarningSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void APlanetsOwnWarningAppearsWhenItIsSelected()
+    {
+        // Matched by the warning's subject id, never by looking for the planet's name inside the
+        // detail text — that string heuristic is the shape of bug this project keeps hitting.
+        var vm = Create();
+        var warned = vm.Planets.FirstOrDefault(p => p.Id == "sampleUnknownGravity");
+
+        Assert.NotNull(warned);
+        vm.SelectedPlanet = warned;
+
+        Assert.True(vm.HasPlanetWarning);
+        Assert.Contains("⚠", vm.PlanetWarningText, StringComparison.Ordinal);
+
+        // And it does not follow you to a planet it has nothing to do with.
+        vm.SelectedPlanet = vm.Planets.First(p => p.SurfaceGravity is not null);
+        Assert.False(vm.HasPlanetWarning);
     }
 
     // ── mass entry ────────────────────────────────────────────────────────────────────────────

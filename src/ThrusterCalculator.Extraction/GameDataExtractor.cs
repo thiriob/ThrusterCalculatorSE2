@@ -335,7 +335,8 @@ public sealed class GameDataExtractor
             {
                 Warn("unpairedBlock",
                     $"{blockName}: no PowerableBlockDefinition reachable through its composite; "
-                    + "density and consumed resource are unavailable.", definition.RelativePath);
+                    + "density and consumed resource are unavailable.", definition.RelativePath,
+                    BlockNaming.IdOf(blockName));
             }
 
             // Absent on hydrogen thrusters, which inherit it from their template.
@@ -349,7 +350,7 @@ public sealed class GameDataExtractor
                 {
                     Warn("unresolvedThrustClass",
                         $"{blockName}: no ThrustClass, and none inherited from a template.",
-                        definition.RelativePath);
+                        definition.RelativePath, BlockNaming.IdOf(blockName));
                 }
             }
 
@@ -361,7 +362,7 @@ public sealed class GameDataExtractor
             {
                 Warn("unknownOccupiedCells",
                     $"{blockName}: no cell count available, so its mass cannot be computed.",
-                    definition.RelativePath);
+                    definition.RelativePath, BlockNaming.IdOf(blockName));
             }
 
             var density = ResolveDensity(definition, block, blockName);
@@ -404,7 +405,7 @@ public sealed class GameDataExtractor
         {
             Warn("unresolvedDensity",
                 $"{blockName}: no Density on its block definition and none inherited, so its mass "
-                + "cannot be computed.", anchor.RelativePath);
+                + "cannot be computed.", anchor.RelativePath, BlockNaming.IdOf(blockName));
         }
 
         return density;
@@ -448,7 +449,7 @@ public sealed class GameDataExtractor
             Warn("unresolvedConsumedResource",
                 $"{blockName}: {(rate is null ? "no consumption rate" : "no resource type")} "
                 + "found on the block or anywhere in its inheritance chain, so its fuel or power "
-                + "draw cannot be reported.", thruster.RelativePath);
+                + "draw cannot be reported.", thruster.RelativePath, BlockNaming.IdOf(blockName));
 
             return null;
         }
@@ -523,7 +524,8 @@ public sealed class GameDataExtractor
             {
                 Warn("unboundedCapacity",
                     $"{blockName}: declares an effectively unlimited inventory "
-                    + $"({capacity:E2} kg); treat with care in any total.", anchor.RelativePath);
+                    + $"({capacity:E2} kg); treat with care in any total.", anchor.RelativePath,
+                    BlockNaming.IdOf(blockName));
             }
 
             var occupancy = OccupiedCellsFor(anchor, blockName);
@@ -569,7 +571,7 @@ public sealed class GameDataExtractor
             {
                 Warn("unresolvedTankResource",
                     $"{blockName}: no ResourceType and none inherited, so its contents cannot be "
-                    + "identified.", anchor.RelativePath);
+                    + "identified.", anchor.RelativePath, BlockNaming.IdOf(blockName));
             }
 
             tanks.Add(new Tank
@@ -615,7 +617,7 @@ public sealed class GameDataExtractor
                 Warn("unknownSurfaceGravity",
                     $"{SplitMilestoneSuffix(rawName).Name}: no GravitationalAcceleration on its "
                     + "gravity generator or anywhere in its inheritance chain, so the user must "
-                    + "supply it.", info.RelativePath);
+                    + "supply it.", info.RelativePath, id);
             }
 
             var atmosphere = geometry.Atmosphere;
@@ -636,7 +638,7 @@ public sealed class GameDataExtractor
                     $"{displayName}: inherits an atmosphere extending to {a.AffectDistance:0.##} "
                     + "planet radii, which is unlikely to be meaningful. Surface density is "
                     + "unaffected; treat altitude results with suspicion.",
-                    info.RelativePath);
+                    info.RelativePath, id);
             }
 
             if (geometry.GravityAffectDistance is null)
@@ -674,7 +676,7 @@ public sealed class GameDataExtractor
                 Warn("unknownAtmosphere",
                     $"{planet.Name}: no atmosphere geometry anywhere in its inheritance chain. "
                     + "Left unknown rather than assumed; the planet is not in the game yet.",
-                    sources[planet.Id]);
+                    sources[planet.Id], planet.Id);
             }
         }
 
@@ -858,6 +860,13 @@ public sealed class GameDataExtractor
             }
             : null;
 
-    private void Warn(string code, string detail, string? file) =>
-        _warnings.Add(new ExtractionWarning { Code = code, Detail = detail, File = file });
+    /// <summary>Records a warning, optionally against the entity it concerns.</summary>
+    private void Warn(string code, string detail, string? file, string? subject = null) =>
+        _warnings.Add(new ExtractionWarning
+        {
+            Code = code,
+            Detail = detail,
+            File = file,
+            Subject = subject,
+        });
 }

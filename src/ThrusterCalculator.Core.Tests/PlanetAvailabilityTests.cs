@@ -23,12 +23,23 @@ public class PlanetAvailabilityTests
     [Theory]
     // The four reachable on 2.3.0: authored for this milestone.
     [InlineData("VS2_3", PlanetAvailability.Playable)]
-    // Legacy, and a milestone that ships data before it ships play.
-    [InlineData("VS1_5", PlanetAvailability.Other)]
-    [InlineData("VS2_2", PlanetAvailability.Other)]
-    [InlineData("VS3_0", PlanetAvailability.Other)]
+    // Legacy — where the generic archetypes and Geomeles land.
+    [InlineData("VS1_5", PlanetAvailability.Older)]
+    [InlineData("VS2_2", PlanetAvailability.Older)]
+    // Data ships ahead of the content; Byblos is the water milestone.
+    [InlineData("VS3_0", PlanetAvailability.Upcoming)]
     public void ClassifiesAgainstTheBuildsOwnMilestone(string milestone, PlanetAvailability expected) =>
         Assert.Equal(expected, PlanetAvailabilityRules.Classify(milestone, "2.3.0.2788"));
+
+    [Fact]
+    public void MilestonesAreComparedNumericallyNotAsText()
+    {
+        // VS2_10 sorts before VS2_2 as a string, which would file a current planet as legacy.
+        Assert.Equal(PlanetAvailability.Playable,
+            PlanetAvailabilityRules.Classify("VS2_10", "2.10.0.1"));
+        Assert.Equal(PlanetAvailability.Upcoming,
+            PlanetAvailabilityRules.Classify("VS2_10", "2.2.0.1"));
+    }
 
     [Fact]
     public void AnUnversionedPlanetIsCustomRatherThanLegacy()

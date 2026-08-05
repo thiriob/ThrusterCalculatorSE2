@@ -263,11 +263,18 @@ and "here's our best guess" produce different UI and different user actions.
 
 ```jsonc
 "warnings": [
-  { "code": "unknownThrustClass", "detail": "HydrogenThruster750: ThrustClass absent",
-    "file": "Blocks/Thrusters/Hydrogen/750/…def" },
+  { "code": "implausibleAtmosphere", "subject": "marsLike",
+    "detail": "MarsLike: inherits an atmosphere extending to 100 planet radii…",
+    "file": "Procedural/VS1_5/Planets/MarsLike/…def" },
   { "code": "missingDefinition", "detail": "Underwater thrusters: models present, no definition" }
 ]
 ```
+
+**`subject` is the id of the entity a warning concerns**, or absent when it is about the extraction
+as a whole. It exists so a consumer can show the warning *where it bites* — the note about MarsLike
+belongs beside MarsLike, at the moment you select it, not in a list nobody opens. Matching a warning
+to an entity by searching for its name inside `detail` would be exactly the sort of string heuristic
+that has misfired in this project before, so the producer states it outright.
 
 Extraction never throws on bad input (Technic §7.2) — it records and continues. Surfacing warnings in
 the config means a degraded extraction is *visible* rather than silently producing confident wrong

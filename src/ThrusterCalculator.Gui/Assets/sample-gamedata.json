@@ -80,5 +80,10 @@
       "provenance": { "surfaceGravity": "unknown" } }
   ],
 
-  "warnings": []
+  "warnings": [
+    { "code": "unknownSurfaceGravity", "subject": "sampleUnknownGravity",
+      "detail": "Sample Uncharted World: no gravity stated, so you must supply it." },
+    { "code": "sampleGlobalNote",
+      "detail": "A warning about the extraction as a whole, with no single subject." }
+  ]
 }

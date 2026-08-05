@@ -190,6 +190,19 @@ where the thrusters actually point — `ThrusterDefinition.ThrustDirection` exis
 
 ## Housekeeping
 
+### B12a — `tc.exe` is not bundled beside the desktop app
+
+**Status:** the Data panel exists and works, but `ProducerProcess` finds no `tc.exe` next to the GUI,
+so Rebuild and the staleness check are both unavailable in a dev build. The UI says so and names the
+command to run by hand — a degradation, not a dead button (Design §4.5.1).
+
+Bundling is more than a `ProjectReference`: `ReferenceOutputAssembly="false"` fixes build order but
+copies nothing, and `Cli` drags in `Engine` plus the game-hosting stack. That is a packaging step
+(B12), not a project reference, which is why it has not been bolted on.
+
+**Consequence today:** on a dev build the panel explains itself instead of working. Once B12's
+packaging exists, it starts working with no code change.
+
 ### B12 — Release packaging needs a manual step
 
 CI builds code but cannot build data: no runner has Space Engineers installed. Packaging a desktop

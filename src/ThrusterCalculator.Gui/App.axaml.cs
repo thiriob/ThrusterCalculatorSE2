@@ -22,6 +22,10 @@ public partial class App : Application
 
             desktop.MainWindow = new MainWindow { DataContext = viewModel };
 
+            // Fire-and-forget: the check spawns tc.exe, and the app must be usable while it runs —
+            // and equally usable if it never answers, on a machine with no game installed.
+            _ = viewModel.CheckStalenessAsync();
+
             // Only on a clean exit. A crash leaves the previous file intact rather than
             // persisting whatever state caused it.
             desktop.Exit += (_, _) =>

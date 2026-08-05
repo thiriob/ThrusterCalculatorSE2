@@ -23,6 +23,7 @@ internal static class Program
                 "extract" => ExtractCommand.Run(rest),
                 "verify" => VerifyCommand.Run(rest),
                 "planet" => PlanetCommand.Run(rest),
+                "fingerprint" => FingerprintCommand.Run(rest),
                 "-h" or "--help" or "help" => Help(),
                 _ => Unknown(command),
             };
@@ -61,6 +62,8 @@ internal static class Program
           verify          Check a local install against the invariants we rely on.
           planet [NAME]   Walk a planet's inheritance chain, showing where each
                           gravity and atmosphere value comes from — or stops.
+          fingerprint     Print the install's build and content fingerprint as JSON,
+                          for staleness checks. Cheap enough to run on every launch.
 
         COMMON OPTIONS
           --install PATH  Use this Space Engineers 2 install instead of searching for one.
