@@ -40,7 +40,9 @@ internal static class TestData
 
     public static GameData Build(params Thruster[] thrusters) => new()
     {
-        SchemaVersion = "1.0",
+        // Current, so these read as configs a present-day tc.exe would write. Tests that care about
+        // an older file say so explicitly rather than relying on this default drifting.
+        SchemaVersion = "1.2",
         Generator = new GeneratorInfo
         {
             Tool = "test", Version = "0", ExtractedAt = DateTimeOffset.UnixEpoch,
@@ -69,6 +71,25 @@ internal static class TestData
             OccupiedCells = occupiedCells,
             Implemented = implemented,
         };
+
+    public const string AtmosphericThrusterId = "atmo";
+
+    public const string HydrogenThrusterId = "hydro";
+
+    /// <summary>
+    /// A config with one atmospheric and one hydrogen thruster, sized so the climb tests exercise
+    /// the interesting case rather than a degenerate one.
+    /// </summary>
+    /// <remarks>
+    /// 100 cells is 225 kg each and 6 kN of thrust, which comfortably lifts a five-tonne ship on
+    /// forty units and — for the atmospheric one — just as certainly runs out partway up, because
+    /// its thrust reaches zero at air density 0.2 while gravity is still three quarters of surface.
+    /// </remarks>
+    public static GameData Config() => Build(
+        Thruster(AtmosphericThrusterId, thrustNewtons: 6_000, occupiedCells: 100,
+            thrustClass: "atmospheric"),
+        Thruster(HydrogenThrusterId, thrustNewtons: 6_000, occupiedCells: 100,
+            thrustClass: "hydrogen"));
 
     public static FlightEnvironment Surface(double gravity, double airDensity = 1.0) => new()
     {

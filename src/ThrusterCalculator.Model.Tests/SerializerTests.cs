@@ -111,6 +111,21 @@ public class SerializerTests
     }
 
     [Fact]
+    public void SchemaOnePointZeroConfigsStillLoadWithTheDefaultsTheyWereWrittenUnder()
+    {
+        // The fixture moved to 1.2, so this is what keeps the older shape covered. A config that
+        // predates a field must not fail, and must not silently acquire a different meaning: the
+        // atmosphere defaults to full density and the gravity model to the only kind implemented.
+        var data = GameDataSerializer.Read(MinimalJson);
+
+        Assert.Equal("1.0", data.SchemaVersion);
+        Assert.Equal("powerOrLinearRamp", data.Models.GravityFalloff.Kind);
+
+        var atmosphere = new Atmosphere { AffectDistance = 1.15, ConstantAffectDistance = 1.08 };
+        Assert.Equal(1.0, atmosphere.Density);
+    }
+
+    [Fact]
     public void AcceptsHigherMinorVersion()
     {
         // Additive changes are safe: unknown fields are ignored, so an older reader still gets
@@ -189,7 +204,7 @@ public class SchemaVersionTests
     [Fact]
     public void FormatsRoundTrip()
     {
-        Assert.Equal("1.1", SchemaVersion.Current.ToString());
+        Assert.Equal("1.2", SchemaVersion.Current.ToString());
         Assert.True(SchemaVersion.TryParse(SchemaVersion.Current.ToString(), out var v));
         Assert.Equal(SchemaVersion.Current, v);
     }

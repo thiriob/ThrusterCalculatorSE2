@@ -462,15 +462,10 @@
 
                     <Border Classes="card" Margin="0,8,0,0">
                         <StackPanel>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Grid.Column="0" Classes="h boxed" Text="CLIMB PROFILE" />
-                                <Border Grid.Column="1" Background="#7A5200" CornerRadius="3"
-                                        Padding="6,1" Margin="0,0,0,6" VerticalAlignment="Top">
-                                    <TextBlock Text="MOCKUP" FontSize="10" Foreground="White" />
-                                </Border>
-                            </Grid>
+                            <TextBlock Classes="h boxed" Text="CLIMB PROFILE" />
 
                             <c:ClimbProfileChart Height="230"
+                                                 IsVisible="{Binding HasClimb}"
                                                  Samples="{Binding ClimbSamples}"
                                                  Bands="{Binding ClimbBands}"
                                                  MaxRatio="{Binding ClimbMaxRatio}"

@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ThrusterCalculator.Core;
+using ThrusterCalculator.Core.Climb;
 using ThrusterCalculator.Core.Sizing;
 using ThrusterCalculator.Gui.Controls;
 using ThrusterCalculator.Gui.Services;
@@ -33,6 +34,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private GameDataIndex _index = null!;
     private CalculationEngine _engine = null!;
     private ThrusterSizer _sizer = null!;
+    private ClimbProfiler _climbProfiler = null!;
 
     /// <summary>Cargo fill for each preset. Tanks are always full — fuel is not optional.</summary>
     private static readonly (string Name, double Fill)[] Presets =
@@ -104,6 +106,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _index = new GameDataIndex(_data);
         _engine = CalculationEngine.Create(_data.Models);
         _sizer = new ThrusterSizer(_index, _engine);
+        _climbProfiler = ClimbProfiler.For(_data);
 
         Origin = config.Origin;
         OriginDescription = config.Description;
@@ -383,114 +386,164 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// </remarks>
     public string UnusableSummary => SingleType.UnusableSummary;
 
-    // ── climb profile: MOCKUP, v3 (Roadmap) ───────────────────────────────────────────────────
+    // ── climb profile (Roadmap v3) ────────────────────────────────────────
 
-    /// <summary>
-    /// A hand-drawn climb curve, so the layout can be judged before the maths exists.
-    /// </summary>
+    /// <summary>The computed climb, recomputed with everything else.</summary>
     /// <remarks>
-    /// <b>Every number here is invented.</b> Nothing computes it and nothing checks it — the shape
-    /// is drawn to be plausible, not correct, and it does not respond to the loadout, the planet or
-    /// the ship's mass.
-    /// <para>
-    /// It cannot become real until two things land: the gravity falloff extracted from
-    /// <c>GravityGenerator</c> (<c>FallOffPower</c>, <c>AccelerationDistance</c> — present in the
-    /// data, unextracted), and B6, the verification that both ramps are actually linear. A smooth
-    /// line is a confident-looking artefact; drawing an unchecked interpolation as one is exactly
-    /// the failure this project keeps catching in itself.
-    /// </para>
-    /// <para>
-    /// The shape chosen is the instructive one: a ship that lifts off comfortably and then stalls
-    /// inside the atmosphere, because that is the failure altitude exists to catch.
-    /// </para>
+    /// This was a hand-drawn mock until the gravity falloff was extracted and both effectiveness
+    /// ramps were confirmed linear against the engine (Backlog B6). Every number here now comes
+    /// from the same models the table above uses, evaluated at 240 heights instead of one.
     /// </remarks>
-    public IReadOnlyList<ClimbSample> ClimbSamples { get; } = BuildMockClimb();
+    private ClimbProfile _climb = ClimbProfile.Unavailable(ClimbStatus.NothingToFly);
 
-    /// <summary>
-    /// Named heights, <b>ground first</b> and not evenly spaced.
-    /// </summary>
-    /// <remarks>
-    /// Altitude 0 is the bottom of the plot, so the list has to start where the ship starts.
-    /// The spacing is real: on Verdure the atmosphere ends at 1.15 planet radii while gravity
-    /// reaches 1.5, so the air is a thin skin over the bottom third of the climb.
-    /// </remarks>
-    public IReadOnlyList<ClimbBand> ClimbBands { get; } =
-        [new ClimbBand("Ground", 0), new ClimbBand("Atmosphere edge", 0.3), new ClimbBand("Space", 1)];
+    /// <summary>Spare acceleration at each height, with altitude as a fraction of the climb.</summary>
+    public IReadOnlyList<ClimbSample> ClimbSamples { get; private set; } = [];
 
-    /// <summary>Right-hand end of the acceleration axis, in m/s².</summary>
-    public double ClimbMaxRatio => 6.0;
+    /// <summary>Named heights, ground first — altitude 0 is the bottom of the plot.</summary>
+    public IReadOnlyList<ClimbBand> ClimbBands { get; private set; } = [];
 
     /// <summary>The margin the user asked for, which shrinks with gravity rather than staying flat.</summary>
-    public IReadOnlyList<ClimbSample> ClimbTargetSamples =>
-        [.. BuildMockGravity().Select(g => new ClimbSample(g.Altitude, (Ratio - 1) * g.NetAcceleration))];
-
-    public string ClimbCaption =>
-        "Placeholder — an invented ship, but the curve follows the game's own model. It mixes "
-        + "atmospheric and ion: atmospheric fades as the air thins, ion only wakes up once it has, "
-        + "and the dip below zero between them is where the ship stops climbing. At the top the "
-        + "curve settles at plain thrust over mass — how briskly it accelerates in space. Real "
-        + "curves need the gravity falloff extracted and both ramp shapes verified in game.";
+    /// <remarks>
+    /// A target of 1.5 means "half a gravity spare", and half a gravity is a smaller number up high.
+    /// Drawing it as a straight line would quietly overstate the requirement at altitude.
+    /// </remarks>
+    public IReadOnlyList<ClimbSample> ClimbTargetSamples { get; private set; } = [];
 
     /// <summary>
-    /// A plausible mixed loadout climbing away from Verdure.
+    /// Right-hand end of the acceleration axis, in m/s². Always zero, which fits it to the data.
     /// </summary>
     /// <remarks>
-    /// <b>The ship is invented; the physics is not.</b> An earlier version of this mock was a
-    /// hand-drawn sigmoid plus a constant, which asymptoted to 0.12 for no reason anyone could
-    /// explain — a pure atmospheric ship reaches exactly zero, because atmospheric thrust is zero
-    /// below 0.2 air density. Fudging the shape produced a picture that could not be reasoned
-    /// about, which is worse than no picture.
-    /// <para>
-    /// So this is computed from the rules already extracted: air density falls linearly from the
-    /// surface to nothing at the atmosphere edge; atmospheric effectiveness ramps between 0.2 and
-    /// 0.8 density and ion ramps the opposite way; gravity falls off as a power of distance. Only
-    /// the falloff exponent is guessed, and only because <c>FallOffPower</c> is not extracted yet.
-    /// </para>
-    /// <para>
-    /// The chosen loadout stalls in the handover: atmospheric has faded before ion is strong enough
-    /// to carry it, and the curve dips under 1.0 in a narrow band just below the atmosphere edge.
-    /// That gap is exactly what altitude exists to reveal, and it is invisible from the ground.
-    /// </para>
+    /// Spare acceleration spans orders of magnitude between a barely-flying tug and an overpowered
+    /// racer, so a fixed axis would either clip the top or squash everything interesting into the
+    /// left edge. The cost is that the scale moves as the loadout changes; the named bands and the
+    /// zero line stay put, which is what the reader actually navigates by.
     /// </remarks>
-    /// <summary>Altitude 1 is the edge of the gravity well (1.5 R); the atmosphere ends at 1.15 R.</summary>
-    private const double AtmosphereTop = 0.3;
+    public double ClimbMaxRatio => 0;
 
-    /// <summary>Surface gravity, and what each family would give at the surface, in m/s².</summary>
-    private const double SurfaceGravity = 9.81;
-    private const double AtmosphericThrust = 1.40 * SurfaceGravity;
-    private const double IonThrust = 0.35 * SurfaceGravity;
+    /// <summary>Whether there is a curve to draw at all.</summary>
+    public bool HasClimb => _climb.IsAvailable && ClimbSamples.Count > 0;
+
+    public string ClimbCaption { get; private set; } = string.Empty;
 
     /// <summary>
-    /// The one guessed number here, and only until <c>FallOffPower</c> is extracted.
+    /// Recomputes the climb for the current loadout, planet and mass.
     /// </summary>
     /// <remarks>
-    /// An exponent near 8 matches the only reading taken in game — 0.33 g at the boundary of space
-    /// (Research §5.3.1) — and shows gravity falling far faster than an inverse square would.
+    /// Altitudes are normalised to a 0–1 fraction of the plotted range because the chart draws a
+    /// picture, not a scale: planet radii mean nothing to a player, and the radius needed to turn
+    /// them into kilometres is world-instance data we do not have. The named bands carry the
+    /// meaning instead.
     /// </remarks>
-    private const double FallOffPower = 8;
+    private void UpdateClimb(double shipMassKg)
+    {
+        _climb = SelectedPlanet is null
+            ? ClimbProfile.Unavailable(ClimbStatus.NothingToFly)
+            : _climbProfiler.Profile(
+                SelectedPlanet.Source, _loadout, shipMassKg, GravityIsCustom ? Gravity : null);
 
-    /// <summary>Gravity at each height, carried as a sample list so the target curve can reuse it.</summary>
-    private static IReadOnlyList<ClimbSample> BuildMockGravity() =>
-        [.. Enumerable.Range(0, 61)
-            .Select(i => i / 60.0)
-            .Select(a => new ClimbSample(a, SurfaceGravity * Math.Pow(1 / (1 + (0.5 * a)), FallOffPower)))];
+        var points = _climb.Points;
 
-    private static IReadOnlyList<ClimbSample> BuildMockClimb() =>
-        [.. BuildMockGravity().Select(g =>
+        if (!_climb.IsAvailable || points.Count == 0)
         {
-            // Air thins linearly to nothing at the top of the atmosphere.
-            var airDensity = Math.Max(0, 1 - (g.Altitude / AtmosphereTop));
+            ClimbSamples = [];
+            ClimbBands = [];
+            ClimbTargetSamples = [];
+        }
+        else
+        {
+            var bottom = points[0].DistanceInRadii;
+            var span = points[^1].DistanceInRadii - bottom;
+            var fraction = span > 0 ? 1.0 / span : 0.0;
 
-            // The two ramps from ThrustClassesConfiguration, in opposite directions.
-            var atmospheric = Math.Clamp((airDensity - 0.2) / 0.6, 0, 1);
-            var ion = Math.Clamp((0.8 - airDensity) / 0.6, 0, 1);
+            ClimbSamples =
+                [.. points.Select(p => new ClimbSample(
+                    (p.DistanceInRadii - bottom) * fraction,
+                    p.SpareAccelerationMetresPerSecondSquared))];
 
-            var thrust = (AtmosphericThrust * atmospheric) + (IonThrust * ion);
+            ClimbBands =
+                [.. _climb.Markers.Select(m => new ClimbBand(
+                    m.Label, (m.DistanceInRadii - bottom) * fraction))];
 
-            // Subtracting gravity rather than dividing by it is what keeps this finite and
-            // meaningful all the way up: at the top it is simply thrust over mass.
-            return new ClimbSample(g.Altitude, thrust - g.NetAcceleration);
-        })];
+            // The same subtraction the curve uses, applied to the requested margin: a ratio of R
+            // asks for (R−1) gravities of spare acceleration, and gravity is a function of height.
+            ClimbTargetSamples =
+                [.. points.Select(p => new ClimbSample(
+                    (p.DistanceInRadii - bottom) * fraction,
+                    (Ratio - 1) * p.GravityMetresPerSecondSquared))];
+        }
+
+        ClimbCaption = DescribeClimb();
+
+        OnPropertyChanged(nameof(ClimbSamples));
+        OnPropertyChanged(nameof(ClimbBands));
+        OnPropertyChanged(nameof(ClimbTargetSamples));
+        OnPropertyChanged(nameof(ClimbCaption));
+        OnPropertyChanged(nameof(HasClimb));
+    }
+
+    /// <summary>
+    /// What the curve means, in a sentence, including when there is no curve.
+    /// </summary>
+    /// <remarks>
+    /// The unavailable cases say <em>why</em> rather than going blank. "No climb here" reads as a
+    /// bug; "this planet states no gravity falloff" reads as data, which is what it is.
+    /// </remarks>
+    private string DescribeClimb()
+    {
+        switch (_climb.Status)
+        {
+            case ClimbStatus.NothingToFly:
+                return "Place a thruster to see how high it gets.";
+
+            case ClimbStatus.ConfigPredatesFalloff:
+                return "This game data was extracted before the climb profile existed, so it "
+                       + "carries no gravity falloff for any planet. Press Rebuild above to "
+                       + "regenerate it from your install. Everything else on screen is unaffected.";
+
+            case ClimbStatus.NoFalloffModel:
+                return $"{SelectedPlanet?.Name ?? "This planet"} states no gravity falloff, so "
+                       + "there is nothing to plot a climb against. Lift-off above is unaffected.";
+
+            case ClimbStatus.UnsupportedGravityShape:
+                return $"{SelectedPlanet?.Name ?? "This planet"} does not have a spherical gravity "
+                       + "field, so height above the surface is not what its gravity depends on. "
+                       + "Drawing a climb here would be about the wrong geometry.";
+        }
+
+        var top = _climb.Points[^1];
+        var inSpace = $"{top.SpareAccelerationMetresPerSecondSquared:0.#} m/s² spare in space";
+
+        var verdict = _climb.CeilingInRadii is not { } ceiling
+            ? $"This loadout climbs clear of the gravity well — {inSpace}."
+            : ceiling <= _climb.Points[0].DistanceInRadii
+                ? "This loadout does not leave the ground."
+                : $"This loadout stalls at {BandFor(ceiling)} — it climbs, slows and stops there.";
+
+        var caveat = _climb.HasUnknownMass
+            ? " Some placed thruster has no known mass, so the curve is optimistic."
+            : string.Empty;
+
+        return verdict
+               + " Spare acceleration is thrust over mass less gravity: zero is the floor, and "
+               + "anything left of it is a ship that is falling."
+               + caveat;
+    }
+
+    /// <summary>Describes a height by the named bands around it, since radii mean nothing.</summary>
+    private string BandFor(double distanceInRadii)
+    {
+        var below = _climb.Markers.LastOrDefault(m => m.DistanceInRadii < distanceInRadii);
+        var above = _climb.Markers.FirstOrDefault(m => m.DistanceInRadii >= distanceInRadii);
+
+        return (below, above) switch
+        {
+            (not null, not null) => $"between {below.Label.ToLowerInvariant()} and "
+                                    + above.Label.ToLowerInvariant(),
+            (not null, null) => $"above {below.Label.ToLowerInvariant()}",
+            (null, not null) => $"below {above.Label.ToLowerInvariant()}",
+            _ => "an unnamed height",
+        };
+    }
 
     // ── configurator ──────────────────────────────────────────────────────────────────────────
 
@@ -846,6 +899,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Split(Project(_sizer.SizeAll(withLoadout), shipMass).ToList(), Remaining);
 
         UpdateConfigurator(withLoadout);
+        UpdateClimb(shipMass);
     }
 
     /// <summary>Turns sizing results into rows, feasible first and cheapest leading.</summary>
@@ -1035,6 +1089,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 SurfaceGravity = p.SurfaceGravity,
                 GravityIsAssumed = p.ProvenanceOf("surfaceGravity") != Provenance.Measured,
                 Atmosphere = p.Atmosphere,
+                Source = p,
             })
             .OrderBy(p => p.Availability)
             .ThenBy(p => p.Name, StringComparer.Ordinal);
@@ -1123,6 +1178,15 @@ public sealed class PlanetOption
     public bool GravityIsAssumed { get; init; }
 
     public Atmosphere? Atmosphere { get; init; }
+
+    /// <summary>
+    /// The config entry this option projects.
+    /// </summary>
+    /// <remarks>
+    /// Carried whole because the climb profile needs the gravity falloff, and copying four more
+    /// fields onto this projection would make it a second, drifting copy of <see cref="Planet"/>.
+    /// </remarks>
+    public required Planet Source { get; init; }
 
     public override string ToString() => Name;
 }

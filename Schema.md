@@ -87,7 +87,10 @@ hand a newer file to an older build.
     "kind": "linearRampAirDensity"      // ramp between min/max ThrustAirDensity, clamped [0,1]
   },
   "atmosphereDensity": {
-    "kind": "linearRampAltitude"        // 1.0 to constantAffectDistance, → 0 at affectDistance
+    "kind": "linearRampAltitude"        // density to constantAffectDistance, → 0 at affectDistance
+  },
+  "gravityFalloff": {
+    "kind": "powerOrLinearRamp"         // schema 1.2 — (accel/r)^power, or linear when power is -1
   }
 }
 ```
@@ -95,9 +98,14 @@ hand a newer file to an older build.
 `kind` selects a `Core` implementation; sibling fields are its parameters. `minBlockMass` sits here
 rather than on each block because it's a single global from one config file.
 
-Both ramp models are **assumed linear** pending in-game verification (Research §8). If a ramp turns
-out to be curved, that's a new `kind` plus a `Core` model — a contained change, not a rewrite. That
-containment is the whole point of R3.
+Both ramp models are **confirmed linear**, read out of the engine rather than assumed — see
+Research §3.3 and §5.2.1 for the transcribed methods. If a future build makes one curved, that's a
+new `kind` plus a `Core` model — a contained change, not a rewrite. That containment is the whole
+point of R3, and it is what let the gravity model be added as one new kind.
+
+`gravityFalloff` is **optional**: configs written against schema 1.0 and 1.1 predate it, and a
+consumer reading one takes `powerOrLinearRamp` — the only kind that exists. A missing model is
+schema evolution (R6); an *unrecognised* `kind` remains fatal.
 
 ---
 
@@ -217,10 +225,14 @@ else.
   "name": "Verdure",
   "milestone": "VS2_3",                       // newest variant wins — Research §5.1
   "surfaceGravity": 9.80665,                  // m/s² — GravityGenerator.GravitationalAcceleration
-  "gravityAffectDistance": 1.5,               // × planet radius
+  "gravityAffectDistance": 1.35,              // × planet radius — gravity is 0 beyond here
+  "gravityAccelerationDistance": 1.05,        // × planet radius — full gravity up to here
+  "gravityFallOffPower": -1,                  // -1 = linear ramp between the two; else an exponent
+  "gravityShape": "Spherical",                // guard: the climb model assumes a radial field
   "atmosphere": {
     "affectDistance": 1.15,                   // density → 0 here
-    "constantAffectDistance": 1.08            // density = 1.0 up to here
+    "constantAffectDistance": 1.08,           // density = `density` up to here
+    "density": 1.0                            // schema 1.1 — 0 means airless despite the distances
   }
 }
 ```
@@ -243,6 +255,19 @@ choosing, so the extracted figure is the default, not a guarantee about *your* s
 `atmosphere` may also be `null` + `"unknown"` when no geometry exists anywhere in the planet's
 inheritance chain. The consumer must read that as *unknown*, not as *airless*; today one unshipped
 planet is affected (Backlog B1).
+
+⚠ **`atmosphere.density` is not decoration, and `null` is not the only way to be airless.** Palatine
+states `density: 0` alongside a perfectly normal set of distances — an atmosphere's geometry with no
+air in it, where atmospheric thrusters produce nothing. A consumer that reads the distances and
+assumes full density will rate them at 100% there. The producer emits an `airlessAtmosphere` warning
+for exactly this case (Backlog B16).
+
+**The three gravity falloff fields travel together.** A consumer needs all of
+`gravityAffectDistance`, `gravityAccelerationDistance` and `gravityFallOffPower` to evaluate gravity
+away from the surface; with any of them missing it should decline to model altitude rather than fall
+back to surface gravity everywhere, which would draw a confident flat line. `gravityShape` is a
+guard rather than a parameter — every shipped planet is `Spherical`, and anything else means the
+"height above the surface" model is about the wrong geometry.
 
 ---
 

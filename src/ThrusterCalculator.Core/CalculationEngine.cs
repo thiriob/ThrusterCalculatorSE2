@@ -56,6 +56,12 @@ public sealed class CalculationEngine
                 "atmosphereDensity", models.AtmosphereDensity.Kind);
         }
 
+        if (models.GravityFalloff.Kind != GravityFalloff.PowerOrLinearRampKind)
+        {
+            throw new UnknownCalculationModelException(
+                "gravityFalloff", models.GravityFalloff.Kind);
+        }
+
         // Only blockMass carries a parameter today. The other two kinds are validated above and
         // then discarded — when one of them grows parameters, retain it here the same way.
         return new CalculationEngine(models.BlockMass.MinBlockMass);
@@ -78,4 +84,11 @@ public sealed class CalculationEngine
     /// <summary>Air density in [0, 1] at a distance from the planet's centre, in planet radii.</summary>
     public double AirDensityAt(Atmosphere? atmosphere, double distanceInRadii) =>
         Calculations.AtmosphereDensity.LinearRampAltitude(atmosphere, distanceInRadii);
+
+    /// <summary>
+    /// Gravity in m/s² at a distance from a planet's centre, or <c>null</c> when the planet carries
+    /// no complete falloff model.
+    /// </summary>
+    public double? GravityAt(Planet planet, double distanceInRadii, double? gravityOverride = null) =>
+        Calculations.GravityFalloff.ForPlanet(planet, distanceInRadii, gravityOverride);
 }

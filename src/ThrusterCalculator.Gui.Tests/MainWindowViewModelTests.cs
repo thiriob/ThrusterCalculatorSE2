@@ -832,4 +832,111 @@ public class MainWindowViewModelTests
     {
         Assert.Contains("no thrusters", Create().Assumption, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ── climb profile ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void NoClimbUntilSomethingIsPlaced()
+    {
+        var vm = Create();
+
+        Assert.False(vm.HasClimb);
+        Assert.Empty(vm.ClimbSamples);
+        Assert.Contains("place a thruster", vm.ClimbCaption, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PlacingThrustersProducesACurveThatStartsAtTheGroundAndEndsAtSpace()
+    {
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.First(p => p.Atmosphere is not null && p.SurfaceGravity is not null);
+
+        Place(vm, 40);
+
+        Assert.True(vm.HasClimb);
+        Assert.Equal(0.0, vm.ClimbSamples[0].Altitude, 8);
+        Assert.Equal(1.0, vm.ClimbSamples[^1].Altitude, 8);
+        Assert.Equal("Ground", vm.ClimbBands[0].Label);
+        Assert.Equal("Space", vm.ClimbBands[^1].Label);
+    }
+
+    [Fact]
+    public void TheCurveRespondsToTheLoadout()
+    {
+        // The whole point of replacing the mock: it did not move when anything changed.
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.First(p => p.Atmosphere is not null && p.SurfaceGravity is not null);
+
+        Place(vm, 20);
+        var fewer = vm.ClimbSamples[0].NetAcceleration;
+
+        Place(vm, 60);
+        var more = vm.ClimbSamples[0].NetAcceleration;
+
+        Assert.True(more > fewer, $"more thrusters should climb harder, got {more} vs {fewer}");
+    }
+
+    [Fact]
+    public void TargetMarginFallsWithGravityRatherThanStayingFlat()
+    {
+        // A ratio of 1.5 asks for half a gravity spare, and half a gravity is less up high. Drawing
+        // it flat would overstate the requirement at altitude.
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.First(p => p.Atmosphere is not null && p.SurfaceGravity is not null);
+        vm.TargetThrustToWeight = 1.5;
+
+        Place(vm, 40);
+
+        Assert.True(vm.ClimbTargetSamples[0].NetAcceleration > 0);
+        Assert.Equal(0.0, vm.ClimbTargetSamples[^1].NetAcceleration, 8);
+    }
+
+    [Fact]
+    public void PlanetWithoutAFalloffModelSaysSoInsteadOfGoingBlank()
+    {
+        // "No climb here" reads as a bug; naming the missing data reads as data.
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.Single(p => p.SurfaceGravity is null);
+
+        Place(vm, 40);
+
+        Assert.False(vm.HasClimb);
+        Assert.Contains("falloff", vm.ClimbCaption, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AConfigOlderThanTheClimbTellsTheUserToRebuildRatherThanBlamingThePlanet()
+    {
+        // What shipped broken: an existing gamedata.json from before schema 1.2 has no falloff for
+        // any planet, and the caption read "Verdure states no gravity falloff" — which sends the
+        // user looking for a problem in the game instead of pressing the Rebuild button.
+        var sample = ConfigSource.Load();
+        var stale = sample with
+        {
+            Data = sample.Data with
+            {
+                SchemaVersion = "1.1",
+                Planets = [.. sample.Data.Planets.Select(p => p with
+                {
+                    GravityAccelerationDistance = null,
+                    GravityFallOffPower = null,
+                    GravityShape = null,
+                })],
+            },
+        };
+
+        var vm = new MainWindowViewModel(stale);
+        Place(vm, 40);
+
+        Assert.False(vm.HasClimb);
+        Assert.Contains("Rebuild", vm.ClimbCaption, StringComparison.Ordinal);
+        Assert.DoesNotContain("states no gravity falloff", vm.ClimbCaption, StringComparison.Ordinal);
+    }
+
+    /// <summary>Puts <paramref name="count"/> of the first placeable thruster on the ship.</summary>
+    private static void Place(MainWindowViewModel vm, int count)
+    {
+        var row = vm.ConfiguratorRows.First();
+        row.Count = count;
+    }
 }

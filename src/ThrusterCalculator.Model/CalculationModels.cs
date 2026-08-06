@@ -19,6 +19,16 @@ public sealed record CalculationModels
     public required ThrustEffectivenessModel ThrustEffectiveness { get; init; }
 
     public required AtmosphereDensityModel AtmosphereDensity { get; init; }
+
+    /// <summary>
+    /// How gravity falls off with altitude. Added in schema 1.2.
+    /// </summary>
+    /// <remarks>
+    /// Optional, unlike its siblings, purely so 1.0 and 1.1 configs still load — they predate the
+    /// field, and a missing model is a schema-evolution question rather than the "unrecognised kind"
+    /// case that must stay fatal (Schema.md R6).
+    /// </remarks>
+    public GravityFalloffModel GravityFalloff { get; init; } = new() { Kind = "powerOrLinearRamp" };
 }
 
 /// <summary>
@@ -62,6 +72,25 @@ public sealed record ThrustEffectivenessModel
 /// <see cref="Atmosphere.AffectDistance"/>, both expressed as multiples of planet radius.
 /// </remarks>
 public sealed record AtmosphereDensityModel
+{
+    public required string Kind { get; init; }
+}
+
+/// <summary>
+/// How gravitational acceleration falls off with distance from a planet's centre.
+/// </summary>
+/// <remarks>
+/// The shipped kind is <c>powerOrLinearRamp</c>, transcribed from
+/// <c>GravityGeneratorComponent.CalculateGravitationalAccelerationMagnitude</c>: surface gravity out
+/// to <see cref="Planet.GravityAccelerationDistance"/>, then either a power law with exponent
+/// <see cref="Planet.GravityFallOffPower"/> or — when that is <c>-1</c>, as every shipped planet
+/// sets it — a linear ramp to zero at <see cref="Planet.GravityAffectDistance"/>.
+/// <para>
+/// One kind rather than two because the engine makes the choice per planet, from a field, not per
+/// build. Splitting them would push a runtime branch into config selection.
+/// </para>
+/// </remarks>
+public sealed record GravityFalloffModel
 {
     public required string Kind { get; init; }
 }

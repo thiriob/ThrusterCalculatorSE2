@@ -147,7 +147,12 @@ The resolution is correct — that is genuinely what the engine would do — but
 a usable boundary. Surface density is unaffected, which is all v1 uses; only an altitude model would
 care. None of the three is playable.
 
-**Revisit when:** an altitude control is built (B7), or these planets are retired.
+**Resolved where it bites, without falsifying the data.** The climb profile plots out to the edge of
+the gravity well, so a 100-radii atmosphere edge simply falls outside the picture, and the "Atmosphere
+edge" band is omitted rather than drawn off-chart or clamped to a boundary the planet does not have.
+The extracted value stays exactly as the engine states it. Air density along the plotted range is
+still computed from the real numbers — which on these planets means the air barely thins at all over
+the climb, and that is genuinely what the engine would do.
 
 ### B5 — Two blocks declare unbounded inventory
 
@@ -276,17 +281,15 @@ Also confirmed in the same pass: total thrust is `Σ (class thrust × efficiency
 
 ## Deferred product scope
 
-### B7 — Altitude, and the two things it needs first
+### B7 — ~~Altitude, and the two things it needs first~~ RESOLVED: the climb profile is built
 
-The model already takes distance in planet radii; v1 evaluates at the surface because Plan mode
-answers the lift-off question. An altitude slider needs B4 and B6 resolved to mean anything — and
-two further things that only became clear once gravity was measured in game (Research §5.3.1):
+The model always took distance in planet radii; v1 evaluated only at the surface. The climb profile
+now evaluates the whole range, and B4 and B6 — the two gates this entry named — are both closed.
 
-**The gravity falloff model is already in the data, and the curve is now known.** It just is not
-extracted yet, because v1 never leaves the surface. The same component that states surface gravity
-carries `AccelerationDistance` (constant out to here), `AffectDistance` (zero beyond), `FallOffPower`
-and `GravityShape`. Extracting them is a few lines in `ReadPlanetGeometry` plus schema fields; **do
-it when altitude lands, not before**, so the config carries nothing unused.
+**The gravity falloff is extracted** (schema 1.2): `gravityAccelerationDistance`,
+`gravityFallOffPower` and `gravityShape` alongside the `gravityAffectDistance` already read. All ten
+planets resolve to the same shape — full gravity to 1.05 R, linear to zero at 1.35 R (1.5 for
+EarthLike), `Spherical`.
 
 `GravityGeneratorComponent.CalculateGravitationalAccelerationMagnitude` gives the curve outright:
 
@@ -306,17 +309,20 @@ template states `AccelerationDistance: 1.05`. That matches the shape of the in-g
 on the ground, falling much faster than Newton — where an inverse square would give 0.756 at the
 atmosphere edge.
 
-In-game readings are still worth taking as a check once radius is known, since the ratio is what
-those readings actually pin down.
+**The check to run in game:** gravity should read about **0.67 g** at Verdure's atmosphere edge. The
+previous best guess here was a power law fitted to one reading of 0.33 g, which the extracted model
+contradicts — it puts 0.33 g at roughly 1.25 R instead, so that reading was taken higher than the
+atmosphere edge. A single reading cannot distinguish curves; this one now has a prediction to fail
+against (Research §5.3.1).
 
-**Altitude needs planet radius, which we do not have.** Every distance in the data is expressed in
-planet radii, so turning "5 km up" into `r/R` requires `R` — and radius is per-world instance data
-(Research §5.3). A radius input was considered and **deliberately not added**: with v1 evaluating
-at the surface, every value a user typed would change no output at all, and a field that visibly
-does nothing implies the app is using it. It belongs with this entry, not before it.
+**Planet radius is still missing, and still does not block anything.** Every distance is in planet
+radii, so turning "5 km up" into `r/R` needs `R`, which is per-world instance data (Research §5.3).
+The profile sidesteps it by naming heights — ground, atmosphere edge, space — rather than numbering
+them, which is what a player thinks in anyway. A radius input remains **deliberately not added**.
 
-**Consequence today:** none. Surface gravity is measured, sea-level air density is 1.0 regardless,
-and the sizing answer does not depend on either falloff curve.
+**Consequence today:** the app answers "will it get there", not just "will it leave the ground". On
+Verdure the two genuinely differ: a pure atmospheric loadout with 454 m/s² spare at the pad still
+stalls around 1.12 R, because the air runs out while gravity is still three quarters of surface.
 
 ### B8 — ~~Mixed thruster compositions~~ RESOLVED: same computation, no second feature
 

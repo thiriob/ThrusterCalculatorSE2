@@ -879,16 +879,39 @@ generator blocks — `0.00` on a ship carrying none). Standing on **Verdure**:
 a default-sized world, and it is now the first entry in `Core.CuratedPlanetGravity`. That table is
 the concrete form of point 2 above.
 
-The other two readings are suggestive but **not usable yet**, because the altitude they were taken
-at is not known precisely. For the record, if "boundary of space" is the atmosphere edge at 1.15 R,
-then an SE1-style falloff `g = g₀·(R/r)ⁿ` fits at n ≈ 7–8 — `(1/1.15)⁷ = 0.376`,
-`(1/1.15)⁸ = 0.327` against the observed 0.33. **Do not build on that**: one reading at an
-unmeasured altitude, quoted to two decimals, cannot distinguish those exponents from each other or
-from a different model entirely. It is a lead for Backlog B7, not a result.
+The other two readings are suggestive but **not usable on their own**, because the altitude they were
+taken at is not known precisely.
 
-Note this also means gravity falls off much faster than the inverse square of a point mass would
-suggest — `(1/1.15)² = 0.756`, more than double what was observed — so a "just use Newton" model
-would be badly wrong well before the gravity well ends at 1.5 R.
+> **The power-law speculation that stood here was wrong, and it is instructive that it fit.** This
+> section previously reasoned: if "boundary of space" is the atmosphere edge at 1.15 R, then
+> `g = g₀·(R/r)ⁿ` fits at n ≈ 7–8, since `(1/1.15)⁸ = 0.327` against the observed 0.33. It was
+> hedged — "do not build on that", "a lead, not a result" — and the hedge earned its keep, because
+> **the falloff is linear, not a power law** (§5.3 above). `FallOffPower: -1` is the engine's
+> sentinel for a linear ramp, and every planet uses it.
+>
+> A curve with one free parameter will pass through one data point. That is not evidence; it is
+> arithmetic. Two decimals of agreement made a wrong model look confirmed.
+
+**What the real model predicts**, for Verdure — surface gravity out to 1.05 R, then linear to zero at
+1.35 R:
+
+| Where | predicted `G:` |
+|---|---:|
+| Ground → 1.05 R | 1.00 g |
+| Atmosphere edge, 1.15 R | **0.67 g** |
+| 1.25 R | 0.33 g |
+| 1.35 R and beyond | 0.00 g |
+
+So the observed 0.33 g was taken at roughly **1.25 R**, not at the atmosphere edge — consistent with
+"boundary of space" meaning something higher than where the air runs out, and with the third reading
+(0.00 g "well into space") being anywhere past 1.35 R.
+
+**This is now a testable prediction rather than a fit**, and it is the natural check on the climb
+profile: gravity should read about two thirds of a g where the atmosphere ends. If it reads 0.33
+there instead, the extracted parameters are wrong and the curve is wrong with them.
+
+Gravity still falls off far faster than a point mass would suggest — Newton gives `(1/1.15)² = 0.756`
+at the atmosphere edge — but the reason is that it is not a Newtonian field at all.
 
 ### 5.4 If we ever do want `.vrb`
 

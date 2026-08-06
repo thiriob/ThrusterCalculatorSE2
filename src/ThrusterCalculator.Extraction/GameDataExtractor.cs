@@ -653,6 +653,9 @@ public sealed class GameDataExtractor
                 Milestone = milestone,
                 SurfaceGravity = geometry.SurfaceGravity,
                 GravityAffectDistance = geometry.GravityAffectDistance,
+                GravityAccelerationDistance = geometry.GravityAccelerationDistance,
+                GravityFallOffPower = geometry.GravityFallOffPower,
+                GravityShape = geometry.GravityShape,
                 Atmosphere = atmosphere,
                 ProvenanceOverrides = provenance,
             };
@@ -705,7 +708,9 @@ public sealed class GameDataExtractor
     private const double ImplausibleAtmosphereExtent = 5.0;
 
     private readonly record struct PlanetGeometry(
-        double? GravityAffectDistance, double? SurfaceGravity, Atmosphere? Atmosphere, bool Measured);
+        double? GravityAffectDistance, double? SurfaceGravity, Atmosphere? Atmosphere, bool Measured,
+        double? GravityAccelerationDistance = null, double? GravityFallOffPower = null,
+        string? GravityShape = null);
 
     /// <summary>
     /// Follows <c>InfoDefinition -> Spawn -> prefab -> composite</c> looking for the gravity and
@@ -729,6 +734,9 @@ public sealed class GameDataExtractor
         double? affect = null;
         double? constant = null;
         double? density = null;
+        double? accelerationDistance = null;
+        double? fallOffPower = null;
+        string? shape = null;
 
         foreach (var component in PlanetComponents(prefab))
         {
@@ -751,6 +759,16 @@ public sealed class GameDataExtractor
                 // user — that was wrong, and only looked true because this reader took
                 // AffectDistance and ignored every other field on the same component.
                 surfaceGravity ??= Number(component, "GravitationalAcceleration");
+
+                // The rest of the falloff model, sitting on the same component and left unread
+                // until the climb profile needed it (Roadmap v3).
+                accelerationDistance ??= Number(component, "AccelerationDistance");
+                fallOffPower ??= Number(component, "FallOffPower");
+
+                shape ??= component.TryGetProperty("GravityShape", out var s)
+                          && s.ValueKind == JsonValueKind.String
+                    ? s.GetString()
+                    : null;
             }
             else if (type.Contains("AtmosphereGeneratorObjectBuilder", StringComparison.Ordinal))
             {
@@ -759,19 +777,21 @@ public sealed class GameDataExtractor
             }
         }
 
-        return affect is { } a && constant is { } c
-            ? new PlanetGeometry(gravity, surfaceGravity,
-                new Atmosphere
-                {
-                    AffectDistance = a,
-                    ConstantAffectDistance = c,
+        var atmosphere = affect is { } a && constant is { } c
+            ? new Atmosphere
+            {
+                AffectDistance = a,
+                ConstantAffectDistance = c,
 
-                    // Every generator but Palatine's resolves to 1.0; the fallback only covers a
-                    // planet whose generator reference we could not follow at all.
-                    Density = density ?? 1.0,
-                },
-                true)
-            : new PlanetGeometry(gravity, surfaceGravity, null, false);
+                // Every generator but Palatine's resolves to 1.0; the fallback only covers a
+                // planet whose generator reference we could not follow at all.
+                Density = density ?? 1.0,
+            }
+            : null;
+
+        return new PlanetGeometry(
+            gravity, surfaceGravity, atmosphere, atmosphere is not null,
+            accelerationDistance, fallOffPower, shape);
     }
 
     /// <summary>

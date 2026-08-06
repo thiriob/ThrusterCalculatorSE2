@@ -7,7 +7,7 @@
     "This file exists to exercise the schema and its edge cases. See Schema.md."
   ],
 
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.2",
 
   "generator": {
     "tool": "tc",
@@ -28,7 +28,8 @@
   "models": {
     "blockMass": { "kind": "sqrtLog10CellCount", "minBlockMass": 5.0 },
     "thrustEffectiveness": { "kind": "linearRampAirDensity" },
-    "atmosphereDensity": { "kind": "linearRampAltitude" }
+    "atmosphereDensity": { "kind": "linearRampAltitude" },
+    "gravityFalloff": { "kind": "powerOrLinearRamp" }
   },
 
   "densities": [
@@ -197,6 +198,9 @@
       "milestone": "VS0_0",
       "surfaceGravity": 10.0,
       "gravityAffectDistance": 1.5,
+      "gravityAccelerationDistance": 1.05,
+      "gravityFallOffPower": -1,
+      "gravityShape": "Spherical",
       "atmosphere": { "affectDistance": 1.15, "constantAffectDistance": 1.08 },
       "provenance": { "surfaceGravity": "assumed" }
     },
@@ -207,6 +211,7 @@
       "milestone": "VS0_0",
       "surfaceGravity": null,
       "gravityAffectDistance": 1.5,
+      "_case2": "no gravity falloff either — a consumer must decline to draw a climb rather than inventing a flat one",
       "atmosphere": { "affectDistance": 1.2, "constantAffectDistance": 1.1 },
       "provenance": { "surfaceGravity": "unknown" }
     },
@@ -217,6 +222,9 @@
       "milestone": "VS0_0",
       "surfaceGravity": 2.0,
       "gravityAffectDistance": 1.5,
+      "gravityAccelerationDistance": 1.05,
+      "gravityFallOffPower": -1,
+      "gravityShape": "Spherical",
       "atmosphere": null,
       "provenance": { "surfaceGravity": "assumed" }
     }

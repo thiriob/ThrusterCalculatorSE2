@@ -10,7 +10,7 @@ after it can be thinner — one idea per version, shipped when it works.
 |---|---|---|
 | **v1** | The calculator | Shipped (`v0.2.0`) |
 | **v2** | The configurator | Largely built |
-| **v3** | The climb | Designed; mocked up in the app |
+| **v3** | The climb | Built — real curve, both gates cleared |
 | **later** | Reading real ships | Needs `.vrb` grid decoding |
 
 ---
@@ -100,19 +100,29 @@ spinner stays. Input and output simply want different units here.
 - **Named heights, not radii.** Ground / atmosphere edge / space. Planet radii mean nothing to a
   player, and naming them sidesteps the radius problem below entirely.
 
-### What has to land first
+### What had to land first — all three now have
 
-1. **Extract the gravity falloff.** `GravityGenerator` already carries `AccelerationDistance`,
-   `AffectDistance`, `FallOffPower` and `GravityShape` beside the surface gravity we read
-   (Research §5.3). A few lines in `ReadPlanetGeometry` plus schema fields — left out of v1 so the
-   config carried nothing unused.
-2. **Verify both ramps in game (B6).** Air density versus altitude, and thrust versus air density,
-   are *assumed linear*. At the surface both clamp, so the assumption is free; the moment the curve
-   is drawn, every point on it is an unchecked interpolation presented as fact. **A smooth line is a
-   confident-looking artefact** — this is the gate, not the code.
-3. **B4** — the legacy planets' 100-radii atmosphere only starts to matter here.
+1. **Extract the gravity falloff.** ✅ `gravityAccelerationDistance`, `gravityFallOffPower` and
+   `gravityShape` join the `gravityAffectDistance` we already read, in schema 1.2. All ten planets
+   resolve the same shape: full gravity to 1.05 R, then **linear** to zero at 1.35 R (1.5 for
+   EarthLike). The curve itself came from decompiling
+   `GravityGeneratorComponent.CalculateGravitationalAccelerationMagnitude`, so it is transcribed
+   rather than fitted — including the `-1` sentinel that selects the linear branch.
+2. **Verify both ramps (B6).** ✅ Both confirmed linear against the engine's own methods, which
+   turned out not to need the in-game measurement this gate was written around. The same pass found
+   a third atmosphere parameter we were not reading — `density`, which is `0` on Palatine — and
+   disproved a sentinel we had invented for negative `MinThrustAirDensity`.
+3. **B4** — ✅ handled where it actually bites: the 100-radii atmosphere is faithful data, so it is
+   kept, and the climb simply draws no "atmosphere edge" band when that band would fall outside the
+   plotted range.
 
-**Planet radius stays open**, and does not block v3: it is needed only to express altitude in
+**The gate held, and it was worth having.** The mock's gravity curve used an invented exponent near
+8, fitted to a single in-game reading of 0.33 g. The real model is linear, and predicts **0.67 g** at
+Verdure's atmosphere edge. A one-parameter curve will always pass through one data point; that is
+arithmetic, not evidence (Research §5.3.1). Had the curve shipped unverified it would have been
+wrong by a factor of two in the middle of its range, and looked entirely plausible.
+
+**Planet radius stays open**, and did not block v3: it is needed only to express altitude in
 kilometres rather than named bands. If it is ever wanted, the lead is the shipped scenario worlds
 under `GameData\Vanilla\Worlds\` — real saves, and `Engine` already reads two other `.vrb` files.
 

@@ -26,8 +26,43 @@ public sealed record Planet : ProvenanceAware
     /// </remarks>
     public double? SurfaceGravity { get; init; }
 
-    /// <summary>Extent of the gravity well, as a multiple of planet radius.</summary>
+    /// <summary>Extent of the gravity well, as a multiple of planet radius. Gravity is zero beyond.</summary>
     public double? GravityAffectDistance { get; init; }
+
+    /// <summary>
+    /// Distance out to which gravity is still at its surface value, as a multiple of planet radius.
+    /// </summary>
+    /// <remarks>
+    /// The inner end of the falloff, and typically just above the surface (1.05). Gravity does not
+    /// begin dropping at the ground.
+    /// </remarks>
+    public double? GravityAccelerationDistance { get; init; }
+
+    /// <summary>
+    /// Falloff exponent, or <c>-1</c> for a linear ramp.
+    /// </summary>
+    /// <remarks>
+    /// A non-negative value is a genuine exponent on
+    /// <c>GravityAccelerationDistance / distance</c> — 2 would be Newtonian. <c>-1</c> selects a
+    /// linear ramp instead, and the engine asserts that no other negative value is supported.
+    /// <para>
+    /// <b>Unlike the identical-looking <c>-1</c> in a thrust class, this one really is a sentinel</b>
+    /// (Research.md §5.3). Every shipped planet uses it: <c>DefaultGravityGenerator</c> pins both
+    /// <c>MinFallOffPower</c> and <c>MaxFallOffPower</c> to <c>-1</c>.
+    /// </para>
+    /// </remarks>
+    public double? GravityFallOffPower { get; init; }
+
+    /// <summary>
+    /// Shape of the gravity field, e.g. <c>Spherical</c>.
+    /// </summary>
+    /// <remarks>
+    /// Carried as a guard rather than a parameter. The climb model treats gravity as a function of
+    /// distance from the planet's centre, which is only true for a spherical field; a planet with
+    /// any other shape would be quietly mismodelled, so the producer warns rather than the consumer
+    /// assuming.
+    /// </remarks>
+    public string? GravityShape { get; init; }
 
     /// <summary><c>null</c> for an airless body — atmospheric thrusters produce nothing there.</summary>
     public Atmosphere? Atmosphere { get; init; }
