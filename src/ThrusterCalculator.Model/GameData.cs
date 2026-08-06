@@ -32,11 +32,38 @@ public sealed record GameData
     public IReadOnlyList<Planet> Planets { get; init; } = [];
 
     /// <summary>
+    /// Engine-wide limits that bound what any ship can do. Added in schema 1.3.
+    /// </summary>
+    /// <remarks>
+    /// <c>null</c> in configs written before 1.3, and a consumer must treat that as "not known"
+    /// rather than "no limit" — assuming a ship can accelerate forever is the optimistic direction.
+    /// </remarks>
+    public WorldLimits? Limits { get; init; }
+
+    /// <summary>
     /// Non-fatal problems hit during extraction. Extraction never throws on bad input — it records
     /// and continues — so this is what makes a degraded extraction visible rather than silent
     /// (Schema.md §6).
     /// </summary>
     public IReadOnlyList<ExtractionWarning> Warnings { get; init; } = [];
+}
+
+/// <summary>
+/// Engine-wide physics limits, from <c>PhysicsSessionConfiguration</c>.
+/// </summary>
+public sealed record WorldLimits
+{
+    /// <summary>
+    /// Top speed for any physics body except a character, in m/s.
+    /// </summary>
+    /// <remarks>
+    /// Load-bearing for the climb profile rather than trivia. A ship coasts through a stretch it
+    /// cannot hover in on kinetic energy it banked lower down, and this caps how much it can bank:
+    /// past the limit, extra thrust buys no more speed and therefore no more altitude. Without it
+    /// a powerful ship is modelled as accelerating indefinitely, which says it reaches space when
+    /// it does not.
+    /// </remarks>
+    public required double MaxSpeedMetresPerSecond { get; init; }
 }
 
 /// <summary>What produced this file.</summary>

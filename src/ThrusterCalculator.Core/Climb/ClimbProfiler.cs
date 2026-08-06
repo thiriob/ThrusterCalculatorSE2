@@ -31,12 +31,16 @@ public sealed class ClimbProfiler
     private readonly GameDataIndex _index;
     private readonly CalculationEngine _engine;
     private readonly bool _configPredatesFalloff;
+    private readonly double? _maxSpeedMetresPerSecond;
 
-    private ClimbProfiler(GameDataIndex index, CalculationEngine engine, bool configPredatesFalloff)
+    private ClimbProfiler(
+        GameDataIndex index, CalculationEngine engine, bool configPredatesFalloff,
+        double? maxSpeedMetresPerSecond)
     {
         _index = index;
         _engine = engine;
         _configPredatesFalloff = configPredatesFalloff;
+        _maxSpeedMetresPerSecond = maxSpeedMetresPerSecond;
     }
 
     /// <exception cref="UnknownCalculationModelException">A model kind is not implemented.</exception>
@@ -50,7 +54,8 @@ public sealed class ClimbProfiler
                        || version.CompareTo(SchemaVersion.GravityFalloffIntroduced) < 0;
 
         return new ClimbProfiler(
-            new GameDataIndex(data), CalculationEngine.Create(data.Models), predates);
+            new GameDataIndex(data), CalculationEngine.Create(data.Models), predates,
+            data.Limits?.MaxSpeedMetresPerSecond);
     }
 
     /// <summary>
@@ -77,8 +82,10 @@ public sealed class ClimbProfiler
         }
 
         if (planet.GravityAffectDistance is not { } top
-            || GravityFalloff.ForPlanet(planet, AtmosphereDensity.SurfaceDistanceInRadii, gravityOverride)
-                is null)
+            || GravityFalloff.ForPlanet(
+                planet,
+                AtmosphereDensity.SurfaceDistanceInRadii + (planet.GroundOffsetInRadii ?? 0.0),
+                gravityOverride) is null)
         {
             return ClimbProfile.Unavailable(_configPredatesFalloff
                 ? ClimbStatus.ConfigPredatesFalloff
@@ -97,7 +104,10 @@ public sealed class ClimbProfiler
             return ClimbProfile.Unavailable(ClimbStatus.NothingToFly);
         }
 
-        var ground = AtmosphereDensity.SurfaceDistanceInRadii;
+        // The terrain's sea level sits above the reference sphere, so the climb starts there and not
+        // at r = 1. It changes no surface answer — both ramps are still clamped 900 m up on Verdure
+        // — but every height above it would otherwise be offset by that much.
+        var ground = AtmosphereDensity.SurfaceDistanceInRadii + (planet.GroundOffsetInRadii ?? 0.0);
 
         // Stop at the top of the gravity well rather than an arbitrary height: past it gravity is
         // zero and the curve is a vertical line carrying no information. Guarded so a planet whose
@@ -119,7 +129,10 @@ public sealed class ClimbProfiler
             Status = ClimbStatus.Available,
             Points = points,
             Markers = MarkersFor(planet, ground, ceilingOfPlot),
-            CeilingInRadii = CeilingOf(points),
+            HoverCeilingInRadii = CeilingOf(points),
+            CoastCeilingInRadii = CoastCeilingOf(points),
+            CoastRadiusLimitMetres = CoastRadiusLimitOf(points, _maxSpeedMetresPerSecond),
+            HoverFloorInRadii = HoverFloorOf(points),
             TotalMassKg = totalMassKg,
             HasUnknownMass = hasUnknownMass,
         };
@@ -251,6 +264,131 @@ public sealed class ClimbProfiler
 
             return previous.DistanceInRadii
                    + (fraction * (current.DistanceInRadii - previous.DistanceInRadii));
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Where a ship starting from rest on the pad actually runs out of climb.
+    /// </summary>
+    /// <remarks>
+    /// Integrates spare acceleration over distance — specific kinetic energy, <c>v² / 2 = R ∫ a
+    /// dr</c> — and returns where that comes back to zero. Trapezoidal, which is exact for the
+    /// piecewise-linear curve the ramps produce between samples.
+    /// <para>
+    /// The planet radius <c>R</c> is a positive constant multiplying the whole integral, so it
+    /// cannot move the zero crossing. That is the only reason this is computable: the speed at any
+    /// height needs <c>R</c>, but the question "does it stop, and where" does not.
+    /// </para>
+    /// </remarks>
+    private static double? CoastCeilingOf(IReadOnlyList<ClimbPoint> points)
+    {
+        if (points.Count == 0) return null;
+
+        // Never gets moving, so there is no momentum to carry it anywhere.
+        if (points[0].SpareAccelerationMetresPerSecondSquared <= 0) return points[0].DistanceInRadii;
+
+        var energy = 0.0;
+
+        for (var i = 1; i < points.Count; i++)
+        {
+            var from = points[i - 1];
+            var to = points[i];
+
+            var span = to.DistanceInRadii - from.DistanceInRadii;
+            var a = (from.SpareAccelerationMetresPerSecondSquared
+                     + to.SpareAccelerationMetresPerSecondSquared) / 2.0;
+
+            var next = energy + (a * span);
+            if (next > 0)
+            {
+                energy = next;
+                continue;
+            }
+
+            // Ran out somewhere inside this segment. Constant acceleration across it puts the stop
+            // at energy / -a, and a guard keeps a segment that ends exactly on zero from dividing
+            // by it.
+            var reached = a < 0 ? energy / -a : span;
+
+            return from.DistanceInRadii + Math.Min(reached, span);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The largest planet radius at which the ship's momentum still carries it across every dip.
+    /// </summary>
+    /// <remarks>
+    /// The deepest drawdown from a running peak of the energy integral is what the ship has to pay
+    /// for out of banked speed, and it scales with <c>R</c>; the speed limit caps what can be
+    /// banked. Equating them gives <c>R* = v² / 2ΔE</c>.
+    /// <para>
+    /// <c>null</c> when nothing is paid for out of momentum — the answer holds at any size — or
+    /// when the config carries no speed limit to compare against.
+    /// </para>
+    /// </remarks>
+    private static double? CoastRadiusLimitOf(
+        IReadOnlyList<ClimbPoint> points, double? maxSpeedMetresPerSecond)
+    {
+        if (maxSpeedMetresPerSecond is not { } speed || speed <= 0) return null;
+        if (points.Count == 0 || points[0].SpareAccelerationMetresPerSecondSquared <= 0) return null;
+
+        var energy = 0.0;
+        var peak = 0.0;
+        var deepest = 0.0;
+
+        for (var i = 1; i < points.Count; i++)
+        {
+            var from = points[i - 1];
+            var to = points[i];
+
+            energy += (from.SpareAccelerationMetresPerSecondSquared
+                       + to.SpareAccelerationMetresPerSecondSquared) / 2.0
+                      * (to.DistanceInRadii - from.DistanceInRadii);
+
+            peak = Math.Max(peak, energy);
+            deepest = Math.Max(deepest, peak - energy);
+        }
+
+        return deepest > 0 ? speed * speed / (2.0 * deepest) : null;
+    }
+
+    /// <summary>
+    /// The lowest height at which a ship that cannot lift off would hold itself up.
+    /// </summary>
+    /// <remarks>
+    /// Only meaningful when spare acceleration is negative at the ground; otherwise the ship flies
+    /// from the pad and the first crossing is a ceiling, not a floor.
+    /// <para>
+    /// <b>Strictly positive, not merely non-negative.</b> At the top of the gravity well gravity is
+    /// zero, so a ship with no thrust left scores exactly zero spare acceleration and technically
+    /// "hovers" — by being weightless, not by flying. Accepting that reported a floor out in space
+    /// for a loadout that cannot fly anywhere, which is worse than saying nothing.
+    /// </para>
+    /// </remarks>
+    private static double? HoverFloorOf(IReadOnlyList<ClimbPoint> points)
+    {
+        if (points.Count == 0 || points[0].SpareAccelerationMetresPerSecondSquared > 0) return null;
+
+        for (var i = 1; i < points.Count; i++)
+        {
+            var below = points[i - 1];
+            var above = points[i];
+
+            if (above.SpareAccelerationMetresPerSecondSquared <= 0) continue;
+
+            var rise = above.SpareAccelerationMetresPerSecondSquared
+                       - below.SpareAccelerationMetresPerSecondSquared;
+
+            var fraction = rise > 0
+                ? -below.SpareAccelerationMetresPerSecondSquared / rise
+                : 0.0;
+
+            return below.DistanceInRadii
+                   + (fraction * (above.DistanceInRadii - below.DistanceInRadii));
         }
 
         return null;

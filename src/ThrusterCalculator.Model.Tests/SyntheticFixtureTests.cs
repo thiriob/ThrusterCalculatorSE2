@@ -11,7 +11,7 @@ public class SyntheticFixtureTests
     {
         var data = Fixture.Load();
 
-        Assert.Equal("1.2", data.SchemaVersion);
+        Assert.Equal("1.4", data.SchemaVersion);
         Assert.Equal("tc", data.Generator.Tool);
         Assert.Equal("0.0.0-synthetic", data.Source.GameBuild);
     }

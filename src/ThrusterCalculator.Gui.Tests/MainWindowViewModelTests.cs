@@ -856,8 +856,8 @@ public class MainWindowViewModelTests
         Assert.True(vm.HasClimb);
         Assert.Equal(0.0, vm.ClimbSamples[0].Altitude, 8);
         Assert.Equal(1.0, vm.ClimbSamples[^1].Altitude, 8);
-        Assert.Equal("Ground", vm.ClimbBands[0].Label);
-        Assert.Equal("Space", vm.ClimbBands[^1].Label);
+        Assert.StartsWith("Ground", vm.ClimbBands[0].Label, StringComparison.Ordinal);
+        Assert.StartsWith("Space", vm.ClimbBands[^1].Label, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -892,6 +892,123 @@ public class MainWindowViewModelTests
     }
 
     [Fact]
+    public void TheVerdictIsThreeClausesInAFixedOrder()
+    {
+        // Take-off, ascent, space — always in that order, so comparing two loadouts means comparing
+        // the same three things in the same places. That is what a paragraph did not allow.
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.First(p => p.Atmosphere is not null && p.SurfaceGravity is not null);
+
+        Place(vm, 40);
+
+        var caption = vm.ClimbCaption;
+
+        Assert.Matches(@"^(Easy|Difficult|Cannot) take[- ]off — .+, .+\.", caption);
+
+        // The verdict carries no lesson in how to read the chart; that lives in the legend, which
+        // does not change and so does not have to be re-read every keystroke.
+        Assert.DoesNotContain("Spare acceleration is", caption, StringComparison.Ordinal);
+        Assert.Contains("faint", MainWindowViewModel.ClimbLegend, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AtmosphericOnlyEndsWithHavingNoThrustOfItsOwnInSpace()
+    {
+        // The third clause is what separates the families, and for atmospheric it is not a small
+        // number — it is exactly zero, which deserves words rather than "0 m/s²".
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.First(p => p.Atmosphere is not null && p.SurfaceGravity is not null);
+
+        var atmo = vm.ConfiguratorRows.First(
+            r => r.Name.Contains("Atmospheric", StringComparison.Ordinal));
+        atmo.Count = 40;
+
+        Assert.Contains("no thrust of its own in space", vm.ClimbCaption, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AGroundedIonLoadoutNamesTheHeightItWouldFlyFrom()
+    {
+        // Ion is dead in thick air and useful above it, so an ion-only ship is commonly pinned to
+        // the pad while holding itself up higher. "Does not leave the ground" on its own hides
+        // that, and hides that adding ion moves the floor down rather than doing nothing.
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.First(p => p.Atmosphere is not null && p.SurfaceGravity is not null);
+
+        var ion = vm.ConfiguratorRows.FirstOrDefault(
+            r => r.Name.Contains("Ion", StringComparison.Ordinal));
+
+        Assert.NotNull(ion);
+        ion!.Count = 200;
+
+        Assert.True(vm.HasClimb);
+        Assert.StartsWith("Cannot take off", vm.ClimbCaption, StringComparison.Ordinal);
+        Assert.Contains("would start hovering", vm.ClimbCaption, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HeightsCarryKilometresAndKeepTheirNames()
+    {
+        // Named heights are what a player navigates by, so a radius adds kilometres rather than
+        // replacing the names — "atmosphere edge" means something, "6.6 km" on its own does not.
+        var vm = Create();
+        vm.SelectedPlanet = vm.Planets.First(p => p.Atmosphere is not null && p.SurfaceGravity is not null);
+        Place(vm, 40);
+
+        Assert.True(vm.CanUsePlanetRadius);
+        Assert.False(vm.RadiusIsCustom);
+
+        var fromGame = vm.ClimbBands.Single(b => b.Label.StartsWith("Space", StringComparison.Ordinal));
+        Assert.Contains("km", fromGame.Label, StringComparison.Ordinal);
+
+        // Overriding it moves every height, which is the whole point of the field.
+        vm.RadiusIsCustom = true;
+        vm.CustomRadiusKm = 30;
+        var overridden = vm.ClimbBands.Single(b => b.Label.StartsWith("Space", StringComparison.Ordinal));
+
+        Assert.NotEqual(fromGame.Label, overridden.Label);
+    }
+
+    [Fact]
+    public void ChangingPlanetClearsTheRadiusOverrideButKeepsItsValue()
+    {
+        // Exactly the gravity behaviour, for the same reason: an override that silently followed
+        // you to another planet would make the picker look broken.
+        var vm = Create();
+        var planets = vm.Planets.Where(p => p.SurfaceGravity is not null).Take(2).ToList();
+
+        vm.SelectedPlanet = planets[0];
+        vm.RadiusIsCustom = true;
+        vm.CustomRadiusKm = 42;
+
+        vm.SelectedPlanet = planets[1];
+
+        Assert.False(vm.RadiusIsCustom);
+        Assert.Equal(42, vm.CustomRadiusKm);
+    }
+
+    [Fact]
+    public void TheRadiusNoteExplainsHowToGetOneWhenThereIsNone()
+    {
+        var vm = Create();
+
+        // Stated by the planet: say so, and say it may still be wrong for this world.
+        vm.SelectedPlanet = vm.Planets.First(p => p.SurfaceGravity is not null);
+        Assert.Contains("game's own planet data", vm.RadiusNote, StringComparison.Ordinal);
+
+        // Overridden by choice.
+        vm.RadiusIsCustom = true;
+        Assert.Contains("Your own value", vm.RadiusNote, StringComparison.Ordinal);
+
+        // Nothing known: the note has to carry the method, not just name the field.
+        vm.RadiusIsCustom = false;
+        vm.SelectedPlanet = vm.Planets.Single(p => p.SurfaceGravity is null);
+
+        Assert.True(vm.RadiusIsCustom);
+        Assert.Contains("hover", vm.RadiusNote, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void PlanetWithoutAFalloffModelSaysSoInsteadOfGoingBlank()
     {
         // "No climb here" reads as a bug; naming the missing data reads as data.
@@ -910,12 +1027,59 @@ public class MainWindowViewModelTests
         // What shipped broken: an existing gamedata.json from before schema 1.2 has no falloff for
         // any planet, and the caption read "Verdure states no gravity falloff" — which sends the
         // user looking for a problem in the game instead of pressing the Rebuild button.
+        var vm = new MainWindowViewModel(WithSchema("1.1"));
+        Place(vm, 40);
+
+        Assert.False(vm.HasClimb);
+        Assert.Contains("Rebuild", vm.ClimbCaption, StringComparison.Ordinal);
+        Assert.DoesNotContain("states no gravity falloff", vm.ClimbCaption, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnOutdatedConfigNamesWhatItCostsRatherThanJustAVersionNumber()
+    {
+        var vm = new MainWindowViewModel(WithSchema("1.0"));
+
+        Assert.True(vm.ConfigIsOutdated);
+
+        // The version belongs in the message, but it cannot be the whole message: "1.0 < 1.2" is
+        // not something a user can act on.
+        Assert.Contains("1.0", vm.ConfigOutdatedMessage, StringComparison.Ordinal);
+        Assert.Contains("climb profile", vm.ConfigOutdatedMessage, StringComparison.Ordinal);
+        Assert.Contains("air density", vm.ConfigOutdatedMessage, StringComparison.Ordinal);
+        Assert.Contains("Rebuild", vm.ConfigOutdatedMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AConfigMissingOnlyTheFalloffDoesNotMentionAirDensity()
+    {
+        // Listing everything regardless would make the notice noise rather than information.
+        var vm = new MainWindowViewModel(WithSchema("1.1"));
+
+        Assert.True(vm.ConfigIsOutdated);
+        Assert.Contains("climb profile", vm.ConfigOutdatedMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("air density", vm.ConfigOutdatedMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ACurrentConfigSaysNothingAboutItsAge()
+    {
+        var vm = Create();
+
+        Assert.False(vm.ConfigIsOutdated);
+        Assert.Equal(string.Empty, vm.ConfigOutdatedMessage);
+    }
+
+    /// <summary>The sample config, relabelled as an older schema and stripped to match.</summary>
+    private static LoadedConfig WithSchema(string schemaVersion)
+    {
         var sample = ConfigSource.Load();
-        var stale = sample with
+
+        return sample with
         {
             Data = sample.Data with
             {
-                SchemaVersion = "1.1",
+                SchemaVersion = schemaVersion,
                 Planets = [.. sample.Data.Planets.Select(p => p with
                 {
                     GravityAccelerationDistance = null,
@@ -924,13 +1088,6 @@ public class MainWindowViewModelTests
                 })],
             },
         };
-
-        var vm = new MainWindowViewModel(stale);
-        Place(vm, 40);
-
-        Assert.False(vm.HasClimb);
-        Assert.Contains("Rebuild", vm.ClimbCaption, StringComparison.Ordinal);
-        Assert.DoesNotContain("states no gravity falloff", vm.ClimbCaption, StringComparison.Ordinal);
     }
 
     /// <summary>Puts <paramref name="count"/> of the first placeable thruster on the ship.</summary>

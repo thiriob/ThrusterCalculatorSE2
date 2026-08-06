@@ -48,6 +48,15 @@ public sealed class AppSettings
     /// </remarks>
     public double CustomGravity { get; set; } = DefaultCustomGravity;
 
+    /// <summary>Whether the user has chosen to override the planet's stated radius.</summary>
+    public bool UseCustomRadius { get; set; }
+
+    /// <summary>The override value in kilometres, kept whether or not it is in force.</summary>
+    public double CustomRadiusKm { get; set; } = DefaultCustomRadiusKm;
+
+    /// <summary>Every planet in the game is 60 km or 20 km, so this is the commoner of the two.</summary>
+    public const double DefaultCustomRadiusKm = 60.0;
+
     public double TargetThrustToWeight { get; set; } = DefaultTargetThrustToWeight;
 
     public const double DefaultCustomGravity = 9.81;
@@ -83,6 +92,9 @@ public sealed class AppSettings
                     & ReadBool(values, "UseCustomGravity", v => settings.UseCustomGravity = v)
                     & ReadDouble(values, "CustomGravity", IsPlausibleGravity,
                         v => settings.CustomGravity = v)
+                    & ReadBool(values, "UseCustomRadius", v => settings.UseCustomRadius = v)
+                    & ReadDouble(values, "CustomRadiusKm", IsPlausibleRadius,
+                        v => settings.CustomRadiusKm = v)
                     & ReadDouble(values, "TargetThrustToWeight", IsPlausibleRatio,
                         v => settings.TargetThrustToWeight = v);
             }
@@ -123,6 +135,9 @@ public sealed class AppSettings
                 .AppendLine($"UseCustomGravity = {UseCustomGravity}")
                 .AppendLine("CustomGravity = "
                             + CustomGravity.ToString("0.####", CultureInfo.InvariantCulture))
+                .AppendLine($"UseCustomRadius = {UseCustomRadius}")
+                .AppendLine("CustomRadiusKm = "
+                            + CustomRadiusKm.ToString("0.####", CultureInfo.InvariantCulture))
                 .AppendLine()
                 .AppendLine("# Target thrust-to-weight. 1.0 hovers, 1.5 lifts off comfortably.")
                 .AppendLine("TargetThrustToWeight = "
@@ -146,6 +161,16 @@ public sealed class AppSettings
     /// default is better than rendering nonsense, and matches the control's own limits.
     /// </remarks>
     private static bool IsPlausibleGravity(double value) => value is > 0 and <= 100;
+
+    /// <summary>
+    /// Kilometres. Zero means "not supplied"; the upper bound only rejects a typo.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately wide. A measured Verdure came out near 50 km and the moons are smaller again,
+    /// but nothing stops a world spawning something far larger, and a bound tight enough to be
+    /// opinionated would reject a legitimate world.
+    /// </remarks>
+    private static bool IsPlausibleRadius(double value) => value is > 0 and <= 100_000;
 
     private static bool IsPlausibleRatio(double value) => value is >= 0.1 and <= 20;
 

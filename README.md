@@ -5,7 +5,9 @@ game rather than a hardcoded stat table.
 
 You give it a departure planet and a ship mass; it tells you how much thrust you need and proposes a
 configuration for each thruster type — accounting for the fact that the thrusters you add have mass
-of their own.
+of their own. Place thrusters yourself and it says what is still missing, and how high the result
+actually gets: lifting off and reaching space are different questions, and on an atmospheric world
+they have different answers.
 
 > **Status: working.** `tc extract` produces a config from your installed game, and the desktop app
 > computes thruster loadouts from it. The documents below are the design, grounded in the actual
@@ -29,7 +31,7 @@ The game files had it right. That's the whole premise.
 | **[Technic.md](Technic.md)** | Architecture. The producer/consumer split, project layout, the sizing math, testing strategy. |
 | **[Schema.md](Schema.md)** | The `gamedata.json` contract — the interface between the two halves. Stands alone. |
 | **[Backlog.md](Backlog.md)** | Deferred decisions and known gaps, each with enough context to pick up cold. |
-| **[Roadmap.md](Roadmap.md)** | What v2 and v3 are for, and what is waiting on the game rather than on us. |
+| **[Roadmap.md](Roadmap.md)** | What each version is for, and what is waiting on the game rather than on us. |
 
 ## How it's put together
 
@@ -48,16 +50,19 @@ Built with .NET 9 and Avalonia. Windows-first, because the game is.
 
 ## Key findings from research
 
-- The game's `.def` files are **plain JSON** — 17,172 of them, forming a GUID-keyed graph. No binary
-  parsing is needed for anything the calculator uses.
+- The game's `.def` files are **plain JSON** — 17,172 of them, forming a GUID-keyed graph. Two
+  binary `.vrb` files are read as well, by hosting the game's own assemblies rather than parsing
+  them: block occupancy, and the inheritance graph the `.def` files leave out.
 - The **atmospheric effectiveness model** is fully in data (`ThrustClassesConfiguration.def`):
   atmospheric thrusters ramp to zero below 0.2 air density, ion thrusters *above* 0.8, and hydrogen
-  has no falloff at all.
+  produces the same thrust everywhere. Both ramps are linear — confirmed against the engine's own
+  code, not assumed.
 - **Block mass isn't stored** — it's computed. Decompiling the engine gave
   `mass = massCurveModifier * sqrt(V) * log10(V) + minBlockMass`, verified by recovering `V` as an
   exact integer for all twelve thrusters.
-- Planets carry their own gravity and atmosphere geometry in data, so **custom and future planets are
-  picked up automatically**.
+- Planets carry their own gravity, radius and atmosphere in data, so **custom and future planets are
+  picked up automatically**. One in-game flight then predicted where a given ship would stop
+  climbing, and the gravity it would read there, to within 13 metres.
 
 ## A note on game data
 

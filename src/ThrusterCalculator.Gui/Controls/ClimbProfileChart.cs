@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -17,7 +18,7 @@ public sealed record ClimbSample(double Altitude, double NetAcceleration);
 public sealed record ClimbBand(string Label, double Altitude);
 
 /// <summary>
-/// Thrust-to-weight against altitude, with altitude running up the vertical axis.
+/// Spare acceleration against altitude, with altitude running up the vertical axis.
 /// </summary>
 /// <remarks>
 /// Drawn directly rather than with a charting package. Avalonia ships no chart control, but it does
@@ -38,6 +39,13 @@ public sealed record ClimbBand(string Label, double Altitude);
 /// the climb it settles at plain thrust over mass, which is exactly how quickly the ship picks up
 /// speed in space.
 /// </para>
+/// <para>
+/// <b>The curve is faint wherever the ship is falling</b> — left of the zero line. Everything
+/// plotted is a hovering analysis, "if the ship were at this height, could it hold itself up?", so
+/// the faint stretches are heights where the answer is no. Drawn dashed rather than dropped: for a
+/// mixed loadout the line climbing back out of the dip is precisely what says "more ion and this
+/// becomes reachable", and a truncated line would hide the reason.
+/// </para>
 /// </remarks>
 public class ClimbProfileChart : Control
 {
@@ -56,10 +64,22 @@ public class ClimbProfileChart : Control
     public static readonly StyledProperty<double> MaxRatioProperty =
         AvaloniaProperty.Register<ClimbProfileChart, double>(nameof(MaxRatio));
 
+    /// <summary>
+    /// Where the ship runs out of climb, as a fraction of the plot, or <c>null</c> if it never does.
+    /// </summary>
+    /// <remarks>
+    /// Supplied rather than derived. The chart used to find its own zero crossing, which was both a
+    /// second copy of the profiler's arithmetic and the wrong number — the ship stops where its
+    /// momentum runs out, not where its lift does, and those are different heights.
+    /// </remarks>
+    public static readonly StyledProperty<double?> StopAltitudeProperty =
+        AvaloniaProperty.Register<ClimbProfileChart, double?>(nameof(StopAltitude));
+
     static ClimbProfileChart()
     {
         AffectsRender<ClimbProfileChart>(
-            SamplesProperty, TargetSamplesProperty, BandsProperty, MaxRatioProperty);
+            SamplesProperty, TargetSamplesProperty, BandsProperty, MaxRatioProperty,
+            StopAltitudeProperty);
     }
 
     public IReadOnlyList<ClimbSample>? Samples
@@ -86,17 +106,37 @@ public class ClimbProfileChart : Control
         set => SetValue(MaxRatioProperty, value);
     }
 
+    public double? StopAltitude
+    {
+        get => GetValue(StopAltitudeProperty);
+        set => SetValue(StopAltitudeProperty, value);
+    }
+
     private static readonly IBrush Axis = new SolidColorBrush(Color.FromArgb(90, 255, 255, 255));
     private static readonly IBrush Label = new SolidColorBrush(Color.FromArgb(150, 255, 255, 255));
     private static readonly IBrush Curve = new SolidColorBrush(Color.FromRgb(0x4C, 0x9A, 0xFF));
     private static readonly IBrush Hover = new SolidColorBrush(Color.FromRgb(0xD0, 0x8A, 0x3E));
     private static readonly IBrush Target = new SolidColorBrush(Color.FromArgb(110, 255, 255, 255));
 
-    /// <summary>Room for the altitude labels on the left and the ratio labels underneath.</summary>
+    /// <summary>The climb above the ceiling: real physics at heights the ship cannot reach.</summary>
+    private static readonly IBrush Unreachable =
+        new SolidColorBrush(Color.FromArgb(70, 0x4C, 0x9A, 0xFF));
+
+    /// <summary>Room for the altitude labels on the left, and ticks plus a title underneath.</summary>
     private const double LeftGutter = 96;
-    private const double BottomGutter = 22;
+    private const double BottomGutter = 38;
     private const double TopPad = 8;
-    private const double RightPad = 12;
+    private const double RightPad = 20;
+
+    /// <summary>
+    /// Ticks to aim for. The step is rounded to a readable one afterwards, so this is a target and
+    /// not a count.
+    /// </summary>
+    /// <remarks>
+    /// Eight rather than six because rounding only ever coarsens the step, never refines it: a
+    /// target of six turned a −10…25 range into ticks at 0, 10 and 20, which is barely a scale.
+    /// </remarks>
+    private const int TargetTickCount = 8;
 
     public override void Render(DrawingContext context)
     {
@@ -122,6 +162,11 @@ public class ClimbProfileChart : Control
         context.DrawLine(axisPen, At(minValue, 0), At(maxValue, 0));
         context.DrawLine(axisPen, At(minValue, 0), At(minValue, 1));
 
+        // Numbers along the acceleration axis, because the scale moves: swapping a thruster family
+        // can change spare acceleration by an order of magnitude, and two curves that look
+        // identical then are not. Zero alone cannot carry that.
+        DrawTicks(context, minValue, maxValue, plotWidth, plotHeight, At);
+
         // Named heights instead of numbers: "atmosphere edge" is a thing a player can picture.
         // Each carries its own altitude, because they are not evenly spaced — the atmosphere is a
         // thin skin against the depth of the gravity well.
@@ -137,43 +182,138 @@ public class ClimbProfileChart : Control
 
         // Zero is the hard floor: left of this line the ship is going down, whatever it wants.
         context.DrawLine(new Pen(Hover, 1.5), At(0, 0), At(0, 1));
-        Write(context, "0", new Point(At(0, 0).X - 4, Bounds.Height - BottomGutter + 4), 11, Hover);
 
         // The margin asked for is a curve, not a line: it shrinks as gravity does.
-        DrawCurve(context, TargetSamples, new Pen(Target, 1, new DashStyle([3, 3], 0)), At);
+        DrawCurve(context, TargetSamples, new Pen(Target, 1, new DashStyle([3, 3], 0)), false, At);
 
-        DrawCurve(context, samples, new Pen(Curve, 2), At);
+        DrawCurve(context, samples, new Pen(Curve, 2), true, At);
 
-        // Where the curve crosses zero is the ceiling — mark it, because it is the answer.
-        for (var i = 1; i < samples.Count; i++)
+        // Where the ship actually runs out of climb — marked *on the curve*, not on the zero line,
+        // because it stops while still decelerating and so at negative spare acceleration. Putting
+        // the dot at zero would point at a height it sailed straight past.
+        if (StopAltitude is { } altitude)
         {
-            var above = samples[i - 1].NetAcceleration;
-            var below = samples[i].NetAcceleration;
-            if (above < 0 || below >= 0) continue;
-
-            var t = above / (above - below);
-            var altitude = samples[i - 1].Altitude + (t * (samples[i].Altitude - samples[i - 1].Altitude));
-
-            context.DrawEllipse(Hover, null, At(0, altitude), 4, 4);
-            break;
+            context.DrawEllipse(Hover, null, At(ValueAt(samples, altitude), altitude), 4, 4);
         }
 
         Write(context, "spare acceleration  m/s²",
-            new Point(LeftGutter + (plotWidth / 2) - 60, Bounds.Height - BottomGutter + 4), 11, Label);
+            new Point(LeftGutter + (plotWidth / 2) - 60, Bounds.Height - 14), 11, Label);
     }
 
+    /// <summary>Graduations along the acceleration axis, at readable round numbers.</summary>
+    private static void DrawTicks(
+        DrawingContext context, double minValue, double maxValue, double plotWidth,
+        double plotHeight, Func<double, double, Point> at)
+    {
+        var step = NiceStep(maxValue - minValue);
+        if (step <= 0) return;
+
+        // Stepping from a multiple of the step means zero always lands exactly on a tick, so the
+        // graduations and the orange floor line agree rather than sitting a pixel apart.
+        var format = step < 1 ? "0.##" : "0";
+        var gridPen = new Pen(Axis, 1, new DashStyle([1, 5], 0));
+
+        for (var value = Math.Ceiling(minValue / step) * step; value <= maxValue; value += step)
+        {
+            var x = at(value, 0).X;
+
+            // Zero gets its own louder line later; a grey one underneath would just fatten it.
+            if (Math.Abs(value) > step / 2)
+            {
+                context.DrawLine(gridPen, new Point(x, TopPad), new Point(x, TopPad + plotHeight));
+            }
+
+            var text = value.ToString(format, CultureInfo.CurrentCulture);
+
+            // Roughly centred on the tick, and never allowed to run off either end of the plot.
+            var width = text.Length * 6.0;
+            var left = Math.Clamp(x - (width / 2), LeftGutter - 8, LeftGutter + plotWidth - width + 8);
+
+            Write(context, text, new Point(left, TopPad + plotHeight + 4), 11, Label);
+        }
+    }
+
+    /// <summary>A round step — 1, 2 or 5 times a power of ten — near the range over the tick target.</summary>
+    private static double NiceStep(double range)
+    {
+        if (range <= 0 || double.IsNaN(range) || double.IsInfinity(range)) return 0;
+
+        var raw = range / TargetTickCount;
+        var magnitude = Math.Pow(10, Math.Floor(Math.Log10(raw)));
+        var normalised = raw / magnitude;
+
+        var multiple = normalised switch
+        {
+            <= 1 => 1.0,
+            <= 2 => 2.0,
+            <= 5 => 5.0,
+            _ => 10.0,
+        };
+
+        return multiple * magnitude;
+    }
+
+    /// <summary>Spare acceleration at an altitude, interpolated between the samples around it.</summary>
+    private static double ValueAt(IReadOnlyList<ClimbSample> samples, double altitude)
+    {
+        if (altitude <= samples[0].Altitude) return samples[0].NetAcceleration;
+
+        for (var i = 1; i < samples.Count; i++)
+        {
+            if (samples[i].Altitude < altitude) continue;
+
+            var span = samples[i].Altitude - samples[i - 1].Altitude;
+            var t = span > 0 ? (altitude - samples[i - 1].Altitude) / span : 0.0;
+
+            return samples[i - 1].NetAcceleration
+                   + (t * (samples[i].NetAcceleration - samples[i - 1].NetAcceleration));
+        }
+
+        return samples[^1].NetAcceleration;
+    }
+
+    /// <summary>
+    /// Draws the polyline, faint wherever the ship cannot hold itself up.
+    /// </summary>
+    /// <remarks>
+    /// <b>The rule is the sign, not the height.</b> An earlier version faded everything above the
+    /// ceiling, which read correctly for an atmospheric ship and uselessly for an ion one: ion
+    /// crosses zero going <em>up</em>, so its ceiling sits at ground level and the whole curve went
+    /// faint — hiding the one thing worth seeing, which is that it flies perfectly well higher up.
+    /// <para>
+    /// Keying off the sign makes the two symmetric, and makes a mixed loadout legible for free: the
+    /// line is solid low, faint through the handover dip, and solid again once ion takes over.
+    /// </para>
+    /// </remarks>
     private static void DrawCurve(
-        DrawingContext context, IReadOnlyList<ClimbSample>? samples, Pen pen,
+        DrawingContext context, IReadOnlyList<ClimbSample>? samples, Pen pen, bool fadeWhenFalling,
         Func<double, double, Point> at)
     {
         if (samples is null) return;
 
+        var faint = new Pen(Unreachable, pen.Thickness, new DashStyle([4, 4], 0));
+        Pen For(double value) => !fadeWhenFalling || value >= 0 ? pen : faint;
+
         // Segment by segment: no geometry builder needed for a polyline.
         for (var i = 1; i < samples.Count; i++)
         {
-            context.DrawLine(pen,
-                at(samples[i - 1].NetAcceleration, samples[i - 1].Altitude),
-                at(samples[i].NetAcceleration, samples[i].Altitude));
+            var (fromValue, fromAltitude) = (samples[i - 1].NetAcceleration, samples[i - 1].Altitude);
+            var (toValue, toAltitude) = (samples[i].NetAcceleration, samples[i].Altitude);
+
+            // A segment straddling zero is split on the crossing, so the change of pen lands exactly
+            // on the floor line rather than up to one sample away from it.
+            if (fadeWhenFalling && (fromValue < 0) != (toValue < 0) && fromValue != toValue)
+            {
+                var t = fromValue / (fromValue - toValue);
+                var crossing = at(0, fromAltitude + (t * (toAltitude - fromAltitude)));
+
+                context.DrawLine(For(fromValue), at(fromValue, fromAltitude), crossing);
+                context.DrawLine(For(toValue), crossing, at(toValue, toAltitude));
+                continue;
+            }
+
+            context.DrawLine(For(fromValue),
+                at(fromValue, fromAltitude), at(toValue, toAltitude));
         }
     }
 

@@ -48,6 +48,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// <summary>The override value, used only when it is in force.</summary>
     [ObservableProperty] private double? _customGravity = AppSettings.DefaultCustomGravity;
 
+    /// <summary>Whether the user has chosen to override the planet's stated radius.</summary>
+    [ObservableProperty] private bool _useCustomRadius;
+
+    /// <summary>The override value in kilometres, used only when it is in force.</summary>
+    [ObservableProperty] private double? _customRadiusKm = AppSettings.DefaultCustomRadiusKm;
+
     [ObservableProperty] private double? _targetThrustToWeight = 1.0;
     [ObservableProperty] private MassEntryMode _massEntryMode = MassEntryMode.Direct;
 
@@ -80,6 +86,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         // quietly win over the newer number. The planet's own value is looked up every time.
         CustomGravity = settings.CustomGravity;
         UseCustomGravity = settings.UseCustomGravity;
+
+        // Only the override is restored; the planet's own radius is looked up every time, for the
+        // same reason gravity is — a cached copy would go stale against a rebuilt config.
+        CustomRadiusKm = settings.CustomRadiusKm;
+        UseCustomRadius = settings.UseCustomRadius;
 
         // Ratio is planet-independent, so it always applies.
         TargetThrustToWeight = settings.TargetThrustToWeight;
@@ -161,6 +172,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             Planets.FirstOrDefault(p => string.Equals(p.Id, selectPlanetId, StringComparison.Ordinal))
             ?? Planets.FirstOrDefault();
 
+        DescribeConfigAge();
+
         OnPropertyChanged(nameof(Origin));
         OnPropertyChanged(nameof(OriginDescription));
         OnPropertyChanged(nameof(IsSampleData));
@@ -168,6 +181,59 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(DataStatus));
         OnPropertyChanged(nameof(HasExtractionWarnings));
         OnPropertyChanged(nameof(ExtractionWarningSummary));
+        OnPropertyChanged(nameof(ConfigIsOutdated));
+        OnPropertyChanged(nameof(ConfigOutdatedMessage));
+    }
+
+    /// <summary>True when the config was written against an older schema than this build.</summary>
+    public bool ConfigIsOutdated { get; private set; }
+
+    /// <summary>What that costs, in terms of things on screen.</summary>
+    public string ConfigOutdatedMessage { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// Compares the config's schema against this build's and says what is missing because of it.
+    /// </summary>
+    /// <remarks>
+    /// <b>A second, unrelated kind of staleness.</b> <see cref="CheckStalenessAsync"/> asks "has the
+    /// game changed since this was extracted?" and needs an install to answer. This asks "has the
+    /// app learned to read things this file does not carry?", which the file answers by itself — so
+    /// it works on a machine with no game on it, and it fires the moment the app is updated.
+    /// <para>
+    /// Naming the affected features rather than the version number is the point. "Schema 1.0 &lt;
+    /// 1.2" tells a user nothing they can act on; "the climb profile will not draw" tells them
+    /// exactly what they are missing and why rebuilding is worth the wait.
+    /// </para>
+    /// </remarks>
+    private void DescribeConfigAge()
+    {
+        ConfigIsOutdated = false;
+        ConfigOutdatedMessage = string.Empty;
+
+        // An unparseable version is not evidence of age — the loader already refused anything with
+        // an incompatible major, so whatever reached here is readable. Saying nothing beats guessing.
+        if (!SchemaVersion.TryParse(_data.SchemaVersion, out var version)) return;
+        if (version.CompareTo(SchemaVersion.Current) >= 0) return;
+
+        var missing = new List<string>();
+
+        if (version.CompareTo(new SchemaVersion(1, 1)) < 0)
+        {
+            missing.Add("per-planet air density, so an airless world like Palatine will look as "
+                        + "though atmospheric thrusters work there");
+        }
+
+        if (version.CompareTo(SchemaVersion.GravityFalloffIntroduced) < 0)
+        {
+            missing.Add("the gravity falloff, so the climb profile cannot be drawn");
+        }
+
+        ConfigIsOutdated = true;
+        ConfigOutdatedMessage =
+            $"This game data was written to schema {version} by an older tc.exe; this app writes "
+            + $"{SchemaVersion.Current}. It is missing "
+            + string.Join("; and ", missing)
+            + ". Press Rebuild to regenerate it — your inputs are kept.";
     }
 
     private static void Refill<T>(ObservableCollection<T> target, IEnumerable<T> items)
@@ -195,6 +261,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         settings.SelectedPlanetId = SelectedPlanet?.Id;
         settings.UseCustomGravity = UseCustomGravity;
         settings.CustomGravity = Custom;
+        settings.UseCustomRadius = UseCustomRadius;
+        settings.CustomRadiusKm = CustomRadius;
         settings.TargetThrustToWeight = Ratio;
     }
 
@@ -420,19 +488,37 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// </remarks>
     public double ClimbMaxRatio => 0;
 
+    /// <summary>
+    /// Where the ship runs out of climb, as a fraction of the plot, for the chart to mark.
+    /// </summary>
+    public double? ClimbStopAltitude { get; private set; }
+
     /// <summary>Whether there is a curve to draw at all.</summary>
     public bool HasClimb => _climb.IsAvailable && ClimbSamples.Count > 0;
 
     public string ClimbCaption { get; private set; } = string.Empty;
 
     /// <summary>
+    /// How to read the picture. Constant, and separate from the verdict on purpose.
+    /// </summary>
+    /// <remarks>
+    /// The verdict changes with every keystroke and is what a returning user actually reads; the
+    /// legend never changes and is what a first-time user needs once. Folding them into one
+    /// paragraph made the verdict hard to find, which is the thing that had to stay scannable.
+    /// </remarks>
+    public static string ClimbLegend =>
+        "Spare acceleration is thrust ÷ mass − gravity. Zero is the floor; the line is faint "
+        + "wherever the ship cannot hold itself up, and dotted where it is the margin you asked "
+        + "for. A ship arrives at a faint stretch already moving and may coast through it — "
+        + "assuming it climbs straight up and never reaches the game's 300 m/s speed limit.";
+
+    /// <summary>
     /// Recomputes the climb for the current loadout, planet and mass.
     /// </summary>
     /// <remarks>
     /// Altitudes are normalised to a 0–1 fraction of the plotted range because the chart draws a
-    /// picture, not a scale: planet radii mean nothing to a player, and the radius needed to turn
-    /// them into kilometres is world-instance data we do not have. The named bands carry the
-    /// meaning instead.
+    /// picture, not a scale — planet radii mean nothing to a player. The named bands carry the
+    /// meaning, and once a radius is known they carry a kilometre figure alongside the name.
     /// </remarks>
     private void UpdateClimb(double shipMassKg)
     {
@@ -448,6 +534,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ClimbSamples = [];
             ClimbBands = [];
             ClimbTargetSamples = [];
+            ClimbStopAltitude = null;
         }
         else
         {
@@ -460,9 +547,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     (p.DistanceInRadii - bottom) * fraction,
                     p.SpareAccelerationMetresPerSecondSquared))];
 
+            // Named heights carry a kilometre figure once the user supplies a radius. The names
+            // stay: "atmosphere edge" is what a player navigates by, and 7.5 km alone is not.
             ClimbBands =
                 [.. _climb.Markers.Select(m => new ClimbBand(
-                    m.Label, (m.DistanceInRadii - bottom) * fraction))];
+                    LabelFor(m), (m.DistanceInRadii - bottom) * fraction))];
 
             // The same subtraction the curve uses, applied to the requested margin: a ratio of R
             // asks for (R−1) gravities of spare acceleration, and gravity is a function of height.
@@ -470,6 +559,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 [.. points.Select(p => new ClimbSample(
                     (p.DistanceInRadii - bottom) * fraction,
                     (Ratio - 1) * p.GravityMetresPerSecondSquared))];
+
+            // Only worth marking once the ship is moving: a loadout that never leaves the pad stops
+            // at the ground, and a dot on the bottom axis says nothing the verdict does not.
+            ClimbStopAltitude = _climb.CoastCeilingInRadii is { } stop && stop > bottom
+                ? (stop - bottom) * fraction
+                : null;
         }
 
         ClimbCaption = DescribeClimb();
@@ -477,6 +572,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(ClimbSamples));
         OnPropertyChanged(nameof(ClimbBands));
         OnPropertyChanged(nameof(ClimbTargetSamples));
+        OnPropertyChanged(nameof(ClimbStopAltitude));
         OnPropertyChanged(nameof(ClimbCaption));
         OnPropertyChanged(nameof(HasClimb));
     }
@@ -510,24 +606,174 @@ public sealed partial class MainWindowViewModel : ObservableObject
                        + "Drawing a climb here would be about the wrong geometry.";
         }
 
-        var top = _climb.Points[^1];
-        var inSpace = $"{top.SpareAccelerationMetresPerSecondSquared:0.#} m/s² spare in space";
+        // Three clauses, always in the same order: off the ground, through the climb, and once out.
+        // A reader comparing two loadouts then compares the same three things in the same places,
+        // which a paragraph does not let them do — and the three happen to be exactly what
+        // separates the thruster families.
+        var caveat = _climb.HasUnknownMass ? " Some placed thruster has unknown mass." : string.Empty;
 
-        var verdict = _climb.CeilingInRadii is not { } ceiling
-            ? $"This loadout climbs clear of the gravity well — {inSpace}."
-            : ceiling <= _climb.Points[0].DistanceInRadii
-                ? "This loadout does not leave the ground."
-                : $"This loadout stalls at {BandFor(ceiling)} — it climbs, slows and stops there.";
-
-        var caveat = _climb.HasUnknownMass
-            ? " Some placed thruster has no known mass, so the curve is optimistic."
-            : string.Empty;
-
-        return verdict
-               + " Spare acceleration is thrust over mass less gravity: zero is the floor, and "
-               + "anything left of it is a ship that is falling."
-               + caveat;
+        return $"{TakeOff()} — {Ascent()}, {InSpace()}.{caveat}";
     }
+
+    /// <summary>How readily it leaves the pad, judged against the gravity it is fighting.</summary>
+    /// <remarks>
+    /// Relative to local gravity rather than an absolute figure: 2 m/s² spare is a shove on Palatine
+    /// and a struggle on Verdure, and the same words must not describe both.
+    /// </remarks>
+    private string TakeOff()
+    {
+        var ground = _climb.Points[0];
+        var spare = ground.SpareAccelerationMetresPerSecondSquared;
+
+        if (spare <= 0) return "Cannot take off";
+
+        return spare < ground.GravityMetresPerSecondSquared * 0.5
+            ? "Difficult take-off"
+            : "Easy take-off";
+    }
+
+    /// <summary>What happens on the way up.</summary>
+    /// <remarks>
+    /// Reads the <em>coast</em> ceiling, not the hover ceiling. A ship arrives at the height where
+    /// it can no longer hold station already moving, and carries through a shallow dip without
+    /// noticing; calling that a stall told a mixed atmospheric/ion ship it was stuck in the
+    /// atmosphere when it reached space with 150 m/s to spare.
+    /// </remarks>
+    private string Ascent()
+    {
+        var grounded = _climb.CoastCeilingInRadii is { } c
+                       && c <= _climb.Points[0].DistanceInRadii;
+
+        if (grounded)
+        {
+            // Being pinned to the pad and being hopeless are different, and only the floor tells
+            // them apart. Ion is the standard case: nothing at all in thick air, useful thrust once
+            // the air thins.
+            return _climb.HoverFloorInRadii is { } floor
+                ? $"would start hovering {BandFor(floor)}"
+                : "never flies at any height";
+        }
+
+        if (_climb.CoastCeilingInRadii is { } ceiling)
+        {
+            // Naming both heights when they differ, because the gap between them is the whole
+            // story: it kept climbing well past the point where it could still hold itself up.
+            return _climb.CoastsThroughADip && _climb.HoverCeilingInRadii is { } lost
+                ? $"loses lift {BandFor(lost)} and coasts on to {BandFor(ceiling)}{SizeCondition()}"
+                : $"stalls {BandFor(ceiling)}";
+        }
+
+        return _climb.CoastsThroughADip
+            ? $"coasts through a dip and climbs clear{SizeCondition()}"
+            : "climbs clear";
+    }
+
+    /// <summary>
+    /// The planet size a coast depends on, stated because it cannot be resolved.
+    /// </summary>
+    /// <remarks>
+    /// Every other number here is independent of planet radius, which is why the climb works at all
+    /// without one. Coasting is the exception: the engine caps ships at a fixed speed, so the energy
+    /// available to cross a dip is fixed while the energy a dip costs grows with the planet. The
+    /// same loadout gets through on a small world and does not on a large one.
+    /// <para>
+    /// Stating the threshold beats picking a radius and hoping. It is one clause, it is true, and it
+    /// is the most concrete reason yet to go and measure a planet (Backlog B7).
+    /// </para>
+    /// </remarks>
+    private string SizeCondition()
+    {
+        if (_climb.CoastRadiusLimitMetres is not { } limit) return string.Empty;
+
+        // With a radius supplied there is nothing conditional left: either the ship has the speed
+        // to cross the dip on this planet or it does not, and saying which beats stating a rule.
+        if (RadiusMetres is { } radius)
+        {
+            return radius <= limit
+                ? string.Empty
+                : $" — except this planet is too large for that at {radius / 1000:0.#} km, so it "
+                  + $"stops instead (it would need to be under {limit / 1000:N0} km)";
+        }
+
+        return $", if the planet's radius is under {limit / 1000:N0} km";
+    }
+
+    /// <summary>
+    /// How briskly it accelerates once out of the gravity well, in words plus the figure.
+    /// </summary>
+    /// <remarks>
+    /// Absolute m/s² here, unlike <see cref="TakeOff"/>: there is no gravity left to be relative to,
+    /// and this is simply how fast the ship gets moving. It is the number that separates a hydrogen
+    /// ship from an ion one, and it stays meaningful for a loadout that never reaches space — that
+    /// is what the faint part of the curve is.
+    /// </remarks>
+    private string InSpace()
+    {
+        var spare = _climb.Points[^1].SpareAccelerationMetresPerSecondSquared;
+
+        // Atmospheric thrusters land exactly here: zero thrust in vacuum, so the ship cannot move
+        // at all once out. Worth saying outright rather than printing "0 m/s²".
+        if (spare <= 0.05) return "with no thrust of its own in space";
+
+        var word = spare switch
+        {
+            < 0.5 => "barely moves",
+            < 2.0 => "sluggish",
+            < 10.0 => "responsive",
+            _ => "very responsive",
+        };
+
+        return $"{word} in space ({spare:0.#} m/s²)";
+    }
+
+    /// <summary>Radius in metres, from the user's kilometres, or <c>null</c> if not supplied.</summary>
+    /// <summary>The override value, defaulted so an empty field cannot mean zero.</summary>
+    private double CustomRadius => CustomRadiusKm is > 0
+        ? CustomRadiusKm.Value
+        : AppSettings.DefaultCustomRadiusKm;
+
+    /// <summary>Radius actually in force, in metres, or <c>null</c> if there is none to use.</summary>
+    private double? RadiusMetres =>
+        RadiusIsCustom ? CustomRadius * 1000 : SelectedPlanet?.Source.RadiusMetres;
+
+    /// <summary>The planet's own radius, as a plain figure.</summary>
+    public string RadiusText =>
+        SelectedPlanet?.Source.RadiusMetres is { } r ? $"{r / 1000:0.##} km" : "not stated";
+
+    /// <summary>Whether this planet states a radius we could fall back to.</summary>
+    public bool CanUsePlanetRadius => SelectedPlanet?.Source.RadiusMetres is not null;
+
+    /// <summary>
+    /// Whether the radius field is live — the checkbox's state.
+    /// </summary>
+    /// <remarks>
+    /// Same shape as <see cref="GravityIsCustom"/>, including the forced-on case: a planet that
+    /// states no radius has nothing to fall back to, so the value has to come from the user. The
+    /// setter records only intent, so visiting such a planet does not turn the override on
+    /// everywhere.
+    /// </remarks>
+    public bool RadiusIsCustom
+    {
+        get => UseCustomRadius || !CanUsePlanetRadius;
+        set => UseCustomRadius = value;
+    }
+
+    /// <summary>Ground sits above the reference sphere, so altitude is not measured from radius R.</summary>
+    private double GroundOffset => SelectedPlanet?.Source.GroundOffsetInRadii ?? 0.0;
+
+    private void NotifyRadiusChanged()
+    {
+        OnPropertyChanged(nameof(RadiusText));
+        OnPropertyChanged(nameof(CanUsePlanetRadius));
+        OnPropertyChanged(nameof(RadiusIsCustom));
+        OnPropertyChanged(nameof(RadiusNote));
+    }
+
+    /// <summary>A marker's name, with its height in kilometres when that can be worked out.</summary>
+    private string LabelFor(ClimbMarker marker) =>
+        RadiusMetres is { } radius
+            ? $"{marker.Label}  {(marker.DistanceInRadii - 1.0 - GroundOffset) * radius / 1000:0.#} km"
+            : marker.Label;
 
     /// <summary>Describes a height by the named bands around it, since radii mean nothing.</summary>
     private string BandFor(double distanceInRadii)
@@ -788,8 +1034,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         // The custom *value* survives — only the tick is cleared — so a user who set one keeps it
         // a click away rather than retyping it.
         UseCustomGravity = false;
+        UseCustomRadius = false;
 
         NotifyGravityChanged();
+        NotifyRadiusChanged();
         Recalculate();
     }
 
@@ -817,6 +1065,28 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(PlanetWarningText));
         OnPropertyChanged(nameof(HasPlanetWarning));
     }
+
+    partial void OnUseCustomRadiusChanged(bool value)
+    {
+        NotifyRadiusChanged();
+        Recalculate();
+    }
+
+    partial void OnCustomRadiusKmChanged(double? value)
+    {
+        NotifyRadiusChanged();
+        Recalculate();
+    }
+
+    /// <summary>Explains what the radius buys, and how to get one.</summary>
+    public string RadiusNote =>
+        RadiusIsCustom
+            ? CanUsePlanetRadius
+                ? "Your own value. Heights on the climb use it."
+                : "This planet states no radius, so heights are named rather than measured until "
+                  + "you give one. To measure it: hover, note your altitude and the HUD's G:."
+            : "Read from the game's own planet data. A world can spawn a planet at a size of its "
+              + "own choosing, so tick Custom if yours differs.";
 
     partial void OnTargetThrustToWeightChanged(double? value) => Recalculate();
 

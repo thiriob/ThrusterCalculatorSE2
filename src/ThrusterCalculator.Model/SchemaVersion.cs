@@ -22,8 +22,17 @@ public readonly record struct SchemaVersion(int Major, int Minor) : IComparable<
     /// carries no falloff, and a consumer that cannot read one declines to draw a climb rather than
     /// inventing a flat line.
     /// </para>
+    /// <para>
+    /// 1.3 added <see cref="GameData.Limits"/>, the engine speed cap. Additive; a consumer without
+    /// one declines to claim a ship coasts anywhere rather than assuming it accelerates forever.
+    /// </para>
+    /// <para>
+    /// 1.4 added <see cref="Planet.RadiusMetres"/> and
+    /// <see cref="Planet.GroundOffsetInRadii"/>, which turn every distance here into kilometres. A
+    /// reader without them names heights instead of measuring them.
+    /// </para>
     /// </remarks>
-    public static readonly SchemaVersion Current = new(1, 2);
+    public static readonly SchemaVersion Current = new(1, 4);
 
     /// <summary>
     /// The first version whose configs can carry a gravity falloff.

@@ -236,6 +236,26 @@ additive, so 1.0 configs still load and default to 1.0, which was right for ever
 one. Extraction emits an `airlessAtmosphere` warning naming Palatine, so the result does not read as
 a bug in the app.
 
+### B17 — Altitude is measured from sea level, not from where you took off
+
+**Status:** modelled to `ZeroGround` and no further; the error is a few hundred metres of terrain.
+
+`groundOffsetInRadii` places the terrain's **sea level** above the reference sphere — 0.015 on
+Verdure, or 900 m — and the climb starts there (Research §5.3.1.2). A ship launching from a hill
+therefore starts slightly higher than the model thinks, and every height it reports is offset by the
+local relief.
+
+The generator states `MaxAltimeter` (0.12 on Verdure) beside `ZeroGround`, so the *range* of relief
+is in the data even though the height of any particular spot is not — that would need the heightmap
+cubemap, which is an image asset rather than a value.
+
+**Consequence today:** small and in a known direction. The one measured flight agreed to 13 m, which
+suggests it launched near sea level; a mountain launch would be out by however high the mountain is,
+against a climb that runs to 18 km.
+
+**Revisit when:** someone reports a climb that disagrees with the game by more than the relief can
+explain. The user has an idea for handling it — pick that up before designing anything.
+
 ## Modelling assumptions not yet verified in game
 
 ### B6 — ~~Both effectiveness ramps are assumed linear~~ RESOLVED: both are linear, read from the engine
@@ -309,20 +329,33 @@ template states `AccelerationDistance: 1.05`. That matches the shape of the in-g
 on the ground, falling much faster than Newton — where an inverse square would give 0.756 at the
 atmosphere edge.
 
-**The check to run in game:** gravity should read about **0.67 g** at Verdure's atmosphere edge. The
-previous best guess here was a power law fitted to one reading of 0.33 g, which the extracted model
-contradicts — it puts 0.33 g at roughly 1.25 R instead, so that reading was taken higher than the
-atmosphere edge. A single reading cannot distinguish curves; this one now has a prediction to fail
-against (Research §5.3.1).
+**Confirmed in game, and the check was sharper than expected.** A fully specified ship — 2 671 kg,
+two Atmospheric Thruster 1 m — has its stopping height fixed by numbers already extracted, so the
+model predicts *both* where it stops (r = 1.0950) and the gravity there (0.850 g). It hovered at
+4.81 km reading **0.84 g**. The comparison needs no planet radius, since both sides are in radii, and
+it discriminates: the power law once fitted to a single 0.33 g reading predicts 0.484 g at that
+point. Two other predictions held the same session — a mixed atmospheric/ion ship reached space, an
+atmospheric-only one did not (Research §5.3.1.1).
 
-**Planet radius is still missing, and still does not block anything.** Every distance is in planet
-radii, so turning "5 km up" into `r/R` needs `R`, which is per-world instance data (Research §5.3).
-The profile sidesteps it by naming heights — ground, atmosphere edge, space — rather than numbering
-them, which is what a player thinks in anyway. A radius input remains **deliberately not added**.
+**Planet radius is extracted too** (schema 1.4), which an earlier version of this entry got wrong.
+It is not world data: `PlanetGeneratorDefinition → DetailCubemap → TargetPlanetRadius` gives 60 000 m
+for every planet and 20 000 m for every moon. The mistake was following `planetRadius` back to
+`PlanetConfiguratorComponent.Radius`, finding `PlanetSpawnerPrefab.def` ship it as `"Radius": 0`, and
+reading a placeholder as proof of absence — the generator branch was never walked (Research §5.3.1.2).
+
+`ZeroGround` comes with it: the terrain's sea level above the reference sphere, so the ground is at
+`1 + ZeroGround` and altitude is not measured from radius R. Omitting it is what made a measured
+Verdure come out at 50 km against the stated 60 km, and made `TargetPlanetRadius` look like a
+rendering parameter to be distrusted. With it, the measurement reconciles to **13 metres**.
+
+Both are the shipped defaults and both are overridable, on the same footing as surface gravity: a
+world may spawn a planet at a size of its own choosing.
 
 **Consequence today:** the app answers "will it get there", not just "will it leave the ground". On
-Verdure the two genuinely differ: a pure atmospheric loadout with 454 m/s² spare at the pad still
-stalls around 1.12 R, because the air runs out while gravity is still three quarters of surface.
+Verdure the two genuinely differ, and not marginally — a pure atmospheric loadout can have hundreds
+of m/s² spare at the pad and still not reach space, because the air runs out over 0.15 R while
+gravity only decays over 0.30 R. Momentum is modelled too, so a shallow dip the ship coasts through
+is not reported as a stall.
 
 ### B8 — ~~Mixed thruster compositions~~ RESOLVED: same computation, no second feature
 

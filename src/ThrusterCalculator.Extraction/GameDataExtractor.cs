@@ -178,8 +178,45 @@ public sealed class GameDataExtractor
             Containers = ExtractContainers(),
             Tanks = ExtractTanks(),
             Planets = ExtractPlanets(),
+            Limits = ExtractLimits(),
             Warnings = _warnings,
         };
+    }
+
+    /// <summary>
+    /// Engine-wide physics limits, from the single <c>PhysicsSessionConfiguration</c>.
+    /// </summary>
+    /// <remarks>
+    /// Left <c>null</c> rather than defaulted if the definition is missing or malformed. A guessed
+    /// speed limit would change what the climb profile says a ship can reach, and inventing a
+    /// number that governs an answer is exactly what this producer does not do.
+    /// </remarks>
+    private WorldLimits? ExtractLimits()
+    {
+        var configuration = _definitions
+            .OfType("PhysicsSessionConfigurationObjectBuilder")
+            .FirstOrDefault();
+
+        if (configuration is null)
+        {
+            Warn("missingPhysicsConfiguration",
+                "No PhysicsSessionConfiguration found, so the engine speed limit is unknown. The "
+                + "climb profile will not claim a ship coasts through a stretch it cannot hover in.",
+                null);
+
+            return null;
+        }
+
+        if (configuration.GetDouble("MaximumSpeedLinear") is not { } maxSpeed || maxSpeed <= 0)
+        {
+            Warn("missingSpeedLimit",
+                $"{configuration.RelativePath} states no usable MaximumSpeedLinear.",
+                configuration.RelativePath);
+
+            return null;
+        }
+
+        return new WorldLimits { MaxSpeedMetresPerSecond = maxSpeed };
     }
 
     // ── models ────────────────────────────────────────────────────────────────────────────────
@@ -646,6 +683,11 @@ public sealed class GameDataExtractor
                 provenance["gravityAffectDistance"] = Provenance.Unknown;
             }
 
+            if (geometry.RadiusMetres is null)
+            {
+                provenance["radiusMetres"] = Provenance.Unknown;
+            }
+
             var planet = new Planet
             {
                 Id = id,
@@ -656,6 +698,8 @@ public sealed class GameDataExtractor
                 GravityAccelerationDistance = geometry.GravityAccelerationDistance,
                 GravityFallOffPower = geometry.GravityFallOffPower,
                 GravityShape = geometry.GravityShape,
+                RadiusMetres = geometry.RadiusMetres,
+                GroundOffsetInRadii = geometry.GroundOffsetInRadii,
                 Atmosphere = atmosphere,
                 ProvenanceOverrides = provenance,
             };
@@ -710,7 +754,8 @@ public sealed class GameDataExtractor
     private readonly record struct PlanetGeometry(
         double? GravityAffectDistance, double? SurfaceGravity, Atmosphere? Atmosphere, bool Measured,
         double? GravityAccelerationDistance = null, double? GravityFallOffPower = null,
-        string? GravityShape = null);
+        string? GravityShape = null, double? RadiusMetres = null,
+        double? GroundOffsetInRadii = null);
 
     /// <summary>
     /// Follows <c>InfoDefinition -> Spawn -> prefab -> composite</c> looking for the gravity and
@@ -734,6 +779,8 @@ public sealed class GameDataExtractor
         double? affect = null;
         double? constant = null;
         double? density = null;
+        double? radius = null;
+        double? groundOffset = null;
         double? accelerationDistance = null;
         double? fallOffPower = null;
         string? shape = null;
@@ -745,6 +792,12 @@ public sealed class GameDataExtractor
             // component, the density on the definition. Resolving the reference is the only way to
             // reach the second half.
             density ??= AtmosphereDensityOf(component);
+
+            if (radius is null && PlanetSizeOf(component) is var (metres, ground))
+            {
+                radius = metres;
+                groundOffset = ground;
+            }
 
             var type = component.TryGetProperty("$Type", out var t)
                 ? t.GetString() ?? string.Empty
@@ -791,8 +844,50 @@ public sealed class GameDataExtractor
 
         return new PlanetGeometry(
             gravity, surfaceGravity, atmosphere, atmosphere is not null,
-            accelerationDistance, fallOffPower, shape);
+            accelerationDistance, fallOffPower, shape, radius, groundOffset);
     }
+
+    /// <summary>
+    /// A planet's radius in metres and the height of its ground above the reference sphere, from
+    /// the voxel generator a component entry points at.
+    /// </summary>
+    /// <remarks>
+    /// <b>The radius is in the game files after all</b> — two hops off the planet's own composition,
+    /// which is why an earlier pass concluded it was not. The chain is
+    /// <c>PlanetGeneratorDefinition -&gt; DetailCubemap -&gt; TargetPlanetRadius</c>: 60 000 m for
+    /// planets, 20 000 m for moons.
+    /// <para>
+    /// <c>ZeroGround</c> comes back with it because the two are useless apart. It is the terrain's
+    /// sea level as a fraction of the radius, so the ground is at <c>1 + ZeroGround</c> and not at
+    /// <c>1</c> — 0.015 on Verdure, or 900 m. Ignoring it makes every altitude read 18 % low, which
+    /// is exactly the error that made <c>TargetPlanetRadius</c> look like a rendering parameter
+    /// rather than the answer (Research.md §5.3.1.1).
+    /// </para>
+    /// </remarks>
+    private (double Metres, double GroundOffset)? PlanetSizeOf(JsonElement component)
+    {
+        if (!component.TryGetProperty("Definition", out var reference)
+            || reference.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        var generator = _definitions.Resolve(reference.GetString());
+        if (generator?.TypeName != "PlanetGeneratorDefinitionObjectBuilder") return null;
+
+        var cubemap = _definitions.Resolve(Dereference(generator.GetString("DetailCubemap")));
+        if (cubemap?.GetDouble("TargetPlanetRadius") is not { } metres || metres <= 0) return null;
+
+        // Absent on some planets, and zero is the right reading: their terrain sits on the
+        // reference sphere.
+        return (metres, InheritedDouble(generator, "ZeroGround") ?? 0.0);
+    }
+
+    /// <summary>Strips the <c>{G}</c> prefix the content uses on some GUID references.</summary>
+    private static string? Dereference(string? reference) =>
+        reference is { Length: > 0 } && reference.StartsWith("{G}", StringComparison.Ordinal)
+            ? reference[3..]
+            : reference;
 
     /// <summary>
     /// The <c>Density</c> of the atmosphere generator a component entry points at, if it points at

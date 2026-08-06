@@ -5,7 +5,7 @@
     "The UI shows a banner whenever this is loaded. Run `tc extract` for real values."
   ],
 
-  "schemaVersion": "1.2",
+  "schemaVersion": "1.4",
   "generator": { "tool": "tc", "version": "0.0.0-sample", "extractedAt": "2000-01-01T00:00:00Z" },
   "source": {
     "gameBuild": "0.0.0-sample",
@@ -19,6 +19,8 @@
     "atmosphereDensity": { "kind": "linearRampAltitude" },
     "gravityFalloff": { "kind": "powerOrLinearRamp" }
   },
+
+  "limits": { "maxSpeedMetresPerSecond": 300.0 },
 
   "densities": [
     { "id": "sampleHollow", "name": "Hollow", "massCurveModifier": 7.0 },
@@ -71,11 +73,13 @@
 
   "planets": [
     { "id": "sampleGarden", "name": "Sample Garden World", "milestone": "VS0_0", "surfaceGravity": 9.81,
-      "gravityAffectDistance": 1.5, "gravityAccelerationDistance": 1.05, "gravityFallOffPower": -1, "gravityShape": "Spherical",
+      "gravityAffectDistance": 1.5, "radiusMetres": 60000, "groundOffsetInRadii": 0.015,
+      "gravityAccelerationDistance": 1.05, "gravityFallOffPower": -1, "gravityShape": "Spherical",
       "atmosphere": { "affectDistance": 1.15, "constantAffectDistance": 1.0 },
       "provenance": { "surfaceGravity": "assumed" } },
     { "id": "sampleMoon", "name": "Sample Airless Moon", "milestone": "VS0_0", "surfaceGravity": 2.0,
-      "gravityAffectDistance": 1.5, "gravityAccelerationDistance": 1.05, "gravityFallOffPower": -1, "gravityShape": "Spherical",
+      "gravityAffectDistance": 1.5, "radiusMetres": 20000, "groundOffsetInRadii": 0,
+      "gravityAccelerationDistance": 1.05, "gravityFallOffPower": -1, "gravityShape": "Spherical",
       "atmosphere": null,
       "provenance": { "surfaceGravity": "assumed" } },
     { "id": "sampleUnknownGravity", "name": "Sample Uncharted World", "milestone": "VS0_0", "surfaceGravity": null,

@@ -282,9 +282,11 @@ Three rules, each load-bearing:
   requirement zero and every loadout trivially feasible — a wrong answer that looks like a working
   app. Out-of-range values fall back to the default instead.
 
-**Saved gravity applies only when its planet came back.** Gravity is a per-planet number the user
-supplies (§4.5 / Research §5.3), so carrying it onto a *different* planet would be wrong — and on a
-first run the stored default would otherwise overwrite whatever the selected planet actually states.
+**Saved overrides apply only when their planet came back.** Gravity and radius are both per-planet,
+and both are *extracted* with a user override on top (§4.5, Research §5.3 and §5.3.1.2). Carrying an
+override onto a *different* planet would be wrong, and on a first run a stored value would otherwise
+overwrite whatever the selected planet actually states. Selecting a planet clears both ticks and
+keeps both typed values, so re-applying one is a click rather than retyping.
 
 ### 4.6 Units
 
@@ -319,9 +321,12 @@ building, what to compare it against.
 │ DEPARTURE        │ LOAD    empty / half / FULL       │ IF YOU USE ONE TYPE · FULL LOAD │
 │  Planet [Verdure]│  300,000   434,400   568,800 kg   │            No.  ADDED MASS  TWR │
 │  Gravity  9.81   │  Needs 5,580 kN at lift-off       │  Atmospheric                    │
-│   from game data │                                   │    1 m     143   +10,362 kg 1.00│
-│  [ ] Custom      │ CONFIGURATOR             [Clear]  │    2.5 m    20    +9,282 kg 1.03│
-│  ────────────    │  Atmospheric                      │    5 m       4    +6,207 kg 1.22│
+│  Radius   60 km  │                                   │    1 m     143   +10,362 kg 1.00│
+│   from game data │ CONFIGURATOR             [Clear]  │    2.5 m    20    +9,282 kg 1.03│
+│  CUSTOM PLANET   │  Atmospheric                      │    5 m       4    +6,207 kg 1.22│
+│  [ ] Gravity 9.81│                                   │                                 │
+│  [ ] Radius  60  │                                   │                                 │
+│  ────────────    │                                   │                                 │
 │ THRUST TARGET    │   1 m   +39 kN  [ 4 ]│ 2.5 m  ... │  Hydrogen                       │
 │  TWR    [ 1.5 ]  │   5 m +1,494 kN [ 1 ]│ 10 m   ... │    0.5 m    93    +3,069 kg 1.01│
 │                  │  Hydrogen                         │  ▸ 4 not usable here            │
@@ -343,9 +348,11 @@ building, what to compare it against.
 
 Notes on the sketch:
 
-- **⚠ marks `Assumed` values inline** and they're editable in place — P2 in practice. Only two carry
-  it now: planet surface gravity, which is world-instance data the producer can never read
-  (Research §5.3), and the hull mass the user types. Block masses are `Derived` from game data.
+- **⚠ marks `Assumed` values inline** and they're editable in place — P2 in practice. In current
+  builds only the hull mass the user types carries it: surface gravity turned out to be stated by the
+  planet's own gravity generator (Research §5.3), so it is `measured`. Block masses are `Derived`.
+  Gravity and radius stay *overridable* regardless, because a world can spawn a planet at a size of
+  its own choosing — an extracted value is the shipped default, not a promise about your save.
 - **Tanks show block mass only**, with no ⚠: gas is massless (Backlog B3), so a full tank weighs what
   an empty one does. Saying so beats leaving the reader to wonder where the fuel went.
 - **Ion shows a reason, not a number.** "✕ no thrust in atmosphere" is the useful answer; a `0` or a

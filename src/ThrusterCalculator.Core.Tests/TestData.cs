@@ -76,6 +76,8 @@ internal static class TestData
 
     public const string HydrogenThrusterId = "hydro";
 
+    public const string IonThrusterId = "ion";
+
     /// <summary>
     /// A config with one atmospheric and one hydrogen thruster, sized so the climb tests exercise
     /// the interesting case rather than a degenerate one.
@@ -89,7 +91,8 @@ internal static class TestData
         Thruster(AtmosphericThrusterId, thrustNewtons: 6_000, occupiedCells: 100,
             thrustClass: "atmospheric"),
         Thruster(HydrogenThrusterId, thrustNewtons: 6_000, occupiedCells: 100,
-            thrustClass: "hydrogen"));
+            thrustClass: "hydrogen"),
+        Thruster(IonThrusterId, thrustNewtons: 6_000, occupiedCells: 100, thrustClass: "ion"));
 
     public static FlightEnvironment Surface(double gravity, double airDensity = 1.0) => new()
     {

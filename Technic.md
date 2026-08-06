@@ -60,7 +60,7 @@ ThrusterCalculatorSE2/
     ── consumer side ──
     ThrusterCalculator.Model/            net9.0  JSON schema types + (de)serialization
     ThrusterCalculator.Model.Tests/      net9.0  contract tests against the synthetic fixture
-    ThrusterCalculator.Core/             net9.0  domain + math. depends on Model only.
+    ThrusterCalculator.Core/             net9.0  domain + math (incl. Climb/). Model only.
     ThrusterCalculator.Core.Tests/       net9.0  green on a clean clone, no SE2
 
     ── producer side (needs an SE2 install at runtime) ──
@@ -149,10 +149,11 @@ Everything the calculator needs, fully resolved — no GUIDs, no cross-reference
 - **Thrusters**: id, display name, class, size, thrust (N), consumed resource + rate, density,
   occupied cells.
 - **Thrust classes**: the ramp endpoints from `ThrustClassesConfiguration.def` (Research §3.3).
-- **Planets**: name, surface gravity, atmosphere geometry (`affectDistance`,
-  `constantAffectDistance`), milestone.
+- **Planets**: name, surface gravity, radius and ground offset, atmosphere geometry
+  (`affectDistance`, `constantAffectDistance`, `density`), the gravity falloff, milestone.
 - **Cargo containers / tanks**: capacity, density, occupied cells.
 - **Densities / resources**: the small shared lookup tables.
+- **Limits**: the engine's speed cap, which bounds how far a ship can coast (§5.7).
 - **Metadata**: schema version, game build, fingerprint, per-`$Type` counts (§7.2), warnings.
 
 Two shape decisions, both settled in Schema.md and worth restating because they're easy to get wrong:
@@ -373,12 +374,16 @@ From `ThrustClassesConfiguration.def` (Research §3.3), per class, given air den
   density). Interpolate on the interval regardless of ordering; never assume `Min < Max`.
 - `WaterOnly` classes excluded unless submerged (not modelled — water unshipped).
 
-Air density comes from the planet's atmosphere geometry: `1.0` up to `ConstantAffectDistance`
-(1.08 R), ramping to `0` at `AffectDistance` (1.15 R). v1 evaluates at the surface; the function
-takes altitude so Design's v2 slider is free.
+Air density comes from the planet's atmosphere geometry: the generator's own `Density` up to
+`ConstantAffectDistance`, ramping to `0` at `AffectDistance` (1.15 R). **`Density` is a third
+parameter, not always 1** — Palatine states `0`, an atmosphere's geometry with no air in it
+(Backlog B16). v1 evaluates at the surface; the function takes altitude, which is what v3's climb
+profile walks.
 
-Both ramps are assumed linear, flagged for in-game verification (Research §8 Q3). Both are §3.2
-named models, so a different shape is a config change plus a `Core` model, not a rewrite.
+**Both ramps are confirmed linear** — read out of the engine rather than verified in game, which is
+how the check turned out to be cheaper than the measurement it replaced (Research §3.3, §5.2.1). Both
+are §3.2 named models, so a different shape is a config change plus a `Core` model, not a rewrite;
+that is what let the gravity falloff arrive as one new kind.
 
 ### 5.4 Block mass
 
@@ -435,6 +440,33 @@ Single-type sizing is closed-form; mixed is a small integer optimisation (minimi
 to the thrust constraint). Keep the solver a **pure function over a set of thruster types** returning
 candidate configurations, so the mixed solver is a sibling sharing the same constraint evaluation —
 not a rewrite (Design §3.3).
+
+### 5.7 The climb, and why it needs a second kind of ceiling
+
+`Core/Climb` walks a fixed loadout from the ground to the edge of the gravity well, 240 samples, and
+reports **spare acceleration** — `thrust ÷ mass − gravity` — at each. Not thrust-to-weight: weight
+tends to zero out of the well, so every ship's ratio runs to infinity and a nimble ship reads like a
+sluggish one.
+
+The subtlety is that there are two ceilings and only one of them is the answer:
+
+| | |
+|---|---|
+| **hover ceiling** | where spare acceleration first reaches zero |
+| **coast ceiling** | where the ship *actually* stops, having arrived there moving |
+
+A ship reaches the hover ceiling with speed and carries on past it. Reporting the first as the
+stopping point told a mixed atmospheric/ion ship it was stuck inside the atmosphere when it reached
+space comfortably — the handover dip is real but takes seconds to cross.
+
+The coast ceiling integrates spare acceleration over distance, which is specific kinetic energy:
+`v² / 2 = R ∫ a dr`. **Radius cancels out of the crossing**, since it is a positive constant
+multiplying the whole integral — which is what made this computable before the radius was extracted,
+and why the verdict never needed one.
+
+Radius does not cancel in one place: the engine caps ships at `limits.maxSpeedMetresPerSecond`, so
+banked energy is bounded while the energy a dip costs scales with `R`. Without a radius the profile
+states the threshold (*"if the planet's radius is under 278 km"*); with one it answers outright.
 
 ---
 

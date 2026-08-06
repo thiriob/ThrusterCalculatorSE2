@@ -16,15 +16,52 @@ public sealed record Planet : ProvenanceAware
 
     /// <summary>Surface gravity in m/s².</summary>
     /// <remarks>
-    /// Always <see cref="Provenance.Assumed"/> or <see cref="Provenance.Unknown"/> — never measured.
-    /// Planet radius is world-instance data rather than definition data, so surface gravity cannot
-    /// be read from the shipped files (Research.md §5.3).
+    /// <see cref="Provenance.Measured"/> for every shipped planet: the gravity generator states it
+    /// outright, usually inherited from a legacy base template (Research.md §5.3). An earlier draft
+    /// of this comment claimed the opposite — that it could never be read — on the strength of a
+    /// reader that took one field off the component and ignored the rest.
     /// <para>
     /// A newly discovered planet with no entry gets <c>null</c>. It must still be listed, with an
     /// empty editable field — that is what makes future and custom planets usable on day one.
     /// </para>
     /// </remarks>
     public double? SurfaceGravity { get; init; }
+
+    /// <summary>
+    /// Planet radius in metres. Added in schema 1.4.
+    /// </summary>
+    /// <remarks>
+    /// Every other distance here is a multiple of this, so it is what turns the whole model into
+    /// kilometres.
+    /// <para>
+    /// Reached two hops off the planet's own composition —
+    /// <c>PlanetGeneratorDefinition → DetailCubemap → TargetPlanetRadius</c> — which is 60 000 m for
+    /// every planet and 20 000 m for every moon. An earlier pass looked only at
+    /// <c>PlanetConfiguratorComponent.Radius</c>, which the spawner prefab ships as a
+    /// <c>0</c> placeholder, and concluded from that alone the value was world data. It is not.
+    /// </para>
+    /// <para>
+    /// A world may still spawn a planet at a different size, so this is the shipped default and not
+    /// a promise about a particular save — the same standing as surface gravity, and overridable
+    /// for the same reason.
+    /// </para>
+    /// </remarks>
+    public double? RadiusMetres { get; init; }
+
+    /// <summary>
+    /// Height of the terrain's sea level above the reference sphere, as a fraction of the radius.
+    /// </summary>
+    /// <remarks>
+    /// <b>Useless to omit, because altitude is measured from the ground and not from the sphere.</b>
+    /// The surface sits at <c>1 + GroundOffsetInRadii</c>, so on Verdure — 0.015, or 900 m — an
+    /// altitude of 4.81 km is <c>r = 1.095</c>, not <c>1.080</c>.
+    /// <para>
+    /// Leaving it out is what made a measured Verdure come out at 50 km against the stated 60 km,
+    /// and made <see cref="RadiusMetres"/> look like a rendering parameter to be distrusted.
+    /// Putting it back reconciles the measurement to within 13 m (Research.md §5.3.1.1).
+    /// </para>
+    /// </remarks>
+    public double? GroundOffsetInRadii { get; init; }
 
     /// <summary>Extent of the gravity well, as a multiple of planet radius. Gravity is zero beyond.</summary>
     public double? GravityAffectDistance { get; init; }

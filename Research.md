@@ -681,9 +681,10 @@ not read — which made the gap matter far more than a count of 8-of-10 suggeste
 it:** the `BaseGuid` walk resolves both from the game's own chain, so Verdure and Kemik are now
 `measured`. One planet remains unknown (Geomeles, Backlog B1) and it is not in the game.
 
-What is still assumed for every planet is **surface gravity magnitude**, which is world-instance data
-and genuinely not in the definitions (§5.3). That is the number the user edits, and it is why every
-configuration in the UI carries `assumed` provenance.
+Surface gravity was assumed here too, and that also turned out to be wrong — the planet's own gravity
+generator states it outright (§5.3), as does its radius (§5.3.1.2). Both are extracted and `measured`.
+They remain user-overridable, because a world may spawn a planet at a size of its own choosing, but
+nothing in the UI has to be typed before it gives an answer.
 
 ---
 
@@ -910,6 +911,67 @@ So the observed 0.33 g was taken at roughly **1.25 R**, not at the atmosphere ed
 profile: gravity should read about two thirds of a g where the atmosphere ends. If it reads 0.33
 there instead, the extracted parameters are wrong and the curve is wrong with them.
 
+#### 5.3.1.1 CONFIRMED in game — and the test needed no planet radius
+
+A **2 671 kg ship with two Atmospheric Thruster 1 m** was flown straight up on Verdure until it could
+climb no further. Everything about where it stops is fixed by numbers we already have — 40 kN each,
+the air-density ramp, the effectiveness ramp and the falloff — so the model predicts the stop at
+**r = 1.0950 R**, and predicts that gravity *there* reads **0.850 g**.
+
+In game it hovered at **4.81 km, reading 0.84 g**.
+
+| model | gravity at the hover point |
+|---|---:|
+| linear falloff (extracted) | **0.850 g** |
+| power law n = 8 (the old fit) | 0.484 g |
+| inverse square | 0.834 g |
+| **measured** | **0.84 g** |
+
+**The comparison is radius-free**, which is what makes it worth anything: both the stopping height
+and the gravity there are expressed in planet radii, so `R` cancels and no assumption about planet
+size enters. It also discriminates — the power law that once "fit" the single 0.33 g reading is out
+by a factor of 1.75 here.
+
+Two further predictions from the same session held: a mixed atmospheric/ion ship **reached space**
+(the profile said it coasts through the handover dip for any planet under 278 km radius), and the
+atmospheric-only ship **did not**.
+
+**Planet radius, and the correction that came with it.** Inverting the measurement first gave ~50 km
+against the 60 000 m the files state, and that 18 % gap was written up here as evidence that the
+stated figure was a rendering parameter to be distrusted. **That was wrong, and the error was ours.**
+
+`PlanetGeneratorDefinition` carries **`ZeroGround`** — the terrain's sea level as a fraction of the
+radius, 0.015 on Verdure, or 900 m. Altitude is measured from the ground, so the surface is at
+`r = 1 + ZeroGround`, not at `r = 1`. Putting it back:
+
+| | |
+|---|---|
+| ground at `1 + 0.015`, R = 60 km, h = 4.81 km | **r = 1.09517** |
+| predicted stop, from thrust and mass alone | **r = 1.09495** |
+| gravity there | 0.849 g, against **0.84 g** measured |
+
+Agreement to 0.0002 radii — **13 metres**. Radius, ground offset, gravity falloff, air ramp and
+effectiveness ramp all reconcile at once, which no single fudge could do.
+
+#### 5.3.1.2 The radius is in the files, two hops off the planet
+
+Not world data after all. The chain is
+`PlanetInfoDefinition → Spawn → composition → PlanetGeneratorDefinition → DetailCubemap`:
+
+| | radius | `ZeroGround` |
+|---|---:|---:|
+| Verdure, Kemik, Byblos, EarthLike, MarsLike, Testerran, WaterPlanet | **60 000 m** | 0.015 / 0.01 / 0 |
+| Caligo, Geomeles, Palatine (moons) | **20 000 m** | 0 |
+
+**Why an earlier pass concluded otherwise.** It followed
+`GravityGeneratorProcessorComponent`'s `planetRadius` back to `PlanetConfiguratorComponent.Radius`,
+found `PlanetSpawnerPrefab.def` shipping `"Radius": 0`, and stopped — a placeholder read as proof of
+absence. The generator branch was never walked. Two hops further on, every planet states its size.
+
+A world can still spawn a planet at a size of its own choosing, so this is the shipped default and
+not a promise about a particular save — exactly the standing surface gravity has, and overridable
+for the same reason.
+
 Gravity still falls off far faster than a point mass would suggest — Newton gives `(1/1.15)² = 0.756`
 at the atmosphere edge — but the reason is that it is not a Newtonian field at all.
 
@@ -976,9 +1038,9 @@ inheritance (§4.4.1). What remains is refinement, not blocking.
 
 Still open:
 
-1. **Surface gravity magnitude per planet** (§5.3) — user-editable value for v1;
-   `VRage.Voxels.SurfaceGravity` is the faithful route, and the engine hosting it needs now exists.
-2. **Verify the 750 cargo container's 2 150 400 kg** (§4.3) — plausibly a placeholder.
+1. **Verify the 750 cargo container's 2 150 400 kg** (§4.3) — plausibly a placeholder.
+2. **B2's 110 kg gap on large blocks** — both ends of the mass chain check out and the middle
+   (native `ComputeTotalMass`) is unexamined.
 
 Closed, kept because the answers are load-bearing:
 
@@ -1027,6 +1089,26 @@ game's main atmospheric planet airless (§5.2.1, Backlog B16).
 Keep it for the same reason as `tc block`: "where does this value actually come from?" is the
 question this data punishes you for guessing at, and the `.def` files cannot answer it — the parent
 pointer is not in them.
+
+**The decompiler itself**, because most of what §3.3, §5.2.1 and §5.3 now assert came out of it and
+the corpus is disposable:
+
+```sh
+dotnet tool install -g ilspycmd            # 10.1.1 at time of writing
+ilspycmd -p -o <outdir> "<install>/Game2/Game2.Simulation.dll"
+```
+
+`-p` writes the whole assembly as a project — around 3 300 files, a few minutes — after which the
+questions are `grep`. Single types are quicker via `ilspycmd -t <FullTypeName> <dll>`, but only if
+you already know the name; the full dump is what lets you find `GetThrustEfficiency` without knowing
+it exists. Not every type lives in `Game2.Simulation.dll` — `PlanetConfiguratorComponent` is in
+`VRage.Voxels.dll` — so when a type will not resolve, find its assembly with
+`grep -l <TypeName> *.dll` first.
+
+**Reading the engine beat measuring the game, repeatedly.** B6 was written as "verify both ramps
+in game"; both were settled in an afternoon by reading the two methods, and the same pass turned up
+`atmosphere.Density` and disproved a sentinel we had invented. Measurement is still what confirms
+the whole chain end to end (§5.3.1.1) — but it is the check, not the route.
 
 **`tc verify`** — invariant checks against a real local install: every thruster pairs to a block
 definition, every referenced GUID resolves, all thrust positive (templates excluded — they carry

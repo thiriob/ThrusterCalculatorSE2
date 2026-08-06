@@ -113,7 +113,7 @@ public class SerializerTests
     [Fact]
     public void SchemaOnePointZeroConfigsStillLoadWithTheDefaultsTheyWereWrittenUnder()
     {
-        // The fixture moved to 1.2, so this is what keeps the older shape covered. A config that
+        // The fixture moved on, so this is what keeps the older shape covered. A config that
         // predates a field must not fail, and must not silently acquire a different meaning: the
         // atmosphere defaults to full density and the gravity model to the only kind implemented.
         var data = GameDataSerializer.Read(MinimalJson);
@@ -123,6 +123,10 @@ public class SerializerTests
 
         var atmosphere = new Atmosphere { AffectDistance = 1.15, ConstantAffectDistance = 1.08 };
         Assert.Equal(1.0, atmosphere.Density);
+
+        // No speed limit rather than an invented one: a consumer must decline to claim a ship
+        // coasts anywhere, not assume it can accelerate forever.
+        Assert.Null(data.Limits);
     }
 
     [Fact]
@@ -204,7 +208,7 @@ public class SchemaVersionTests
     [Fact]
     public void FormatsRoundTrip()
     {
-        Assert.Equal("1.2", SchemaVersion.Current.ToString());
+        Assert.Equal("1.4", SchemaVersion.Current.ToString());
         Assert.True(SchemaVersion.TryParse(SchemaVersion.Current.ToString(), out var v));
         Assert.Equal(SchemaVersion.Current, v);
     }

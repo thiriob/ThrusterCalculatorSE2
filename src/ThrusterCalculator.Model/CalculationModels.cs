@@ -56,7 +56,8 @@ public sealed record BlockMassModel
 /// <remarks>
 /// The shipped kind is <c>linearRampAirDensity</c>: ramp between the class's
 /// <see cref="ThrustClass.MinThrustAirDensity"/> and <see cref="ThrustClass.MaxThrustAirDensity"/>,
-/// clamped to [0,1]. Linearity is assumed pending in-game verification (Research.md §8).
+/// clamped to [0,1]. Linearity is <b>confirmed</b> against
+/// <c>GridMovementCollectorComponent.GetThrustEfficiency</c>, not assumed (Research.md §3.3).
 /// </remarks>
 public sealed record ThrustEffectivenessModel
 {
@@ -67,9 +68,10 @@ public sealed record ThrustEffectivenessModel
 /// How air density falls off with altitude above a planet.
 /// </summary>
 /// <remarks>
-/// The shipped kind is <c>linearRampAltitude</c>: density is 1.0 out to
+/// The shipped kind is <c>linearRampAltitude</c>: density is <see cref="Atmosphere.Density"/> out to
 /// <see cref="Atmosphere.ConstantAffectDistance"/> and ramps to 0 at
-/// <see cref="Atmosphere.AffectDistance"/>, both expressed as multiples of planet radius.
+/// <see cref="Atmosphere.AffectDistance"/>, both expressed as multiples of planet radius. Confirmed
+/// linear against <c>AtmosphereGeneratorComponent</c> (Research.md §5.2.1).
 /// </remarks>
 public sealed record AtmosphereDensityModel
 {

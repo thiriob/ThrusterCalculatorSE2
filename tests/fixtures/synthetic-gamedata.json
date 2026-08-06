@@ -7,7 +7,7 @@
     "This file exists to exercise the schema and its edge cases. See Schema.md."
   ],
 
-  "schemaVersion": "1.2",
+  "schemaVersion": "1.4",
 
   "generator": {
     "tool": "tc",
@@ -31,6 +31,8 @@
     "atmosphereDensity": { "kind": "linearRampAltitude" },
     "gravityFalloff": { "kind": "powerOrLinearRamp" }
   },
+
+  "limits": { "maxSpeedMetresPerSecond": 300.0 },
 
   "densities": [
     { "id": "testHollow", "name": "Test Hollow", "massCurveModifier": 10.0 },

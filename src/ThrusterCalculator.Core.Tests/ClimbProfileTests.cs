@@ -154,7 +154,7 @@ public class ClimbProfilerTests
             "should lift off the ground");
         Assert.False(profile.ReachesSpace, "atmospheric thrust must run out before space");
 
-        var ceiling = Assert.IsType<double>(profile.CeilingInRadii);
+        var ceiling = Assert.IsType<double>(profile.HoverCeilingInRadii);
         Assert.InRange(ceiling, 1.0, 1.15);
     }
 
@@ -164,7 +164,112 @@ public class ClimbProfilerTests
         var profile = Profile(TestData.HydrogenThrusterId, 40, 5_000);
 
         Assert.True(profile.ReachesSpace);
-        Assert.Null(profile.CeilingInRadii);
+        Assert.Null(profile.HoverCeilingInRadii);
+    }
+
+    [Fact]
+    public void AMixedShipCoastsThroughTheHandoverDipInsteadOfStalling()
+    {
+        // The case that shipped wrong. Atmospheric fades out exactly as ion comes in — the two
+        // ramps are complementary — but ion is far weaker per block, so total thrust collapses
+        // mid-handover and the ship briefly cannot hold itself up. It arrives there moving, and
+        // carries straight through. Reporting the hover ceiling as the stopping point told a ship
+        // that comfortably reaches space that it was stuck inside the atmosphere.
+        var data = TestData.Config();
+        var planet = GravityFalloffTests.PlanetFor(atmosphere: VerdureAir);
+
+        // Ion carrying roughly a fifth of the atmospheric thrust, which is about the ratio a real
+        // mixed ship ends up with — enough to make the dip shallow, not enough to remove it.
+        var profile = ClimbProfiler.For(data).Profile(planet, new Loadout([
+            new PlacedThruster(TestData.AtmosphericThrusterId, 100),
+            new PlacedThruster(TestData.IonThrusterId, 20),
+        ]), 5_000);
+
+        Assert.True(profile.IsAvailable);
+
+        // It really does lose lift on the way — this is not a case with no dip at all.
+        Assert.NotNull(profile.HoverCeilingInRadii);
+        Assert.True(profile.Points.Any(p => p.SpareAccelerationMetresPerSecondSquared < 0),
+            "the loadout should have a stretch it cannot hover in");
+
+        // And it gets to space anyway.
+        Assert.True(profile.CoastsThroughADip);
+        Assert.Null(profile.CoastCeilingInRadii);
+        Assert.True(profile.ReachesSpace);
+    }
+
+    [Fact]
+    public void TheCoastCeilingIsNeverBelowTheHoverCeiling()
+    {
+        // Momentum can only ever carry the ship further than hovering would. If these ever invert,
+        // the integration has the wrong sign somewhere.
+        foreach (var count in new[] { 2, 5, 10, 20, 40, 80 })
+        {
+            var profile = Profile(TestData.AtmosphericThrusterId, count, 5_000);
+            if (profile.HoverCeilingInRadii is not { } hover) continue;
+
+            var coast = profile.CoastCeilingInRadii ?? double.PositiveInfinity;
+            Assert.True(coast >= hover - 1e-9,
+                $"{count} thrusters: coast {coast} below hover {hover}");
+        }
+    }
+
+    [Fact]
+    public void AGroundedShipStopsAtTheGroundUnderBothMeasures()
+    {
+        var profile = Profile(TestData.AtmosphericThrusterId, 1, 10_000_000);
+
+        Assert.Equal(1.0, profile.HoverCeilingInRadii!.Value, 8);
+        Assert.Equal(1.0, profile.CoastCeilingInRadii!.Value, 8);
+        Assert.False(profile.CoastsThroughADip);
+    }
+
+    [Fact]
+    public void AnIonLoadoutIsGroundedButReportsTheHeightItWouldFlyFrom()
+    {
+        // Ion produces nothing in thick air and everything above it, so an ion-only ship is often
+        // pinned to the pad while being perfectly capable higher up. "Does not leave the ground"
+        // alone states the problem and hides the reason — that it is a launch problem.
+        var data = TestData.Config();
+        var planet = GravityFalloffTests.PlanetFor(atmosphere: VerdureAir);
+
+        var profile = ClimbProfiler.For(data).Profile(
+            planet, new Loadout([new PlacedThruster(TestData.IonThrusterId, 40)]), 5_000);
+
+        Assert.True(profile.IsAvailable);
+        Assert.Equal(1.0, profile.HoverCeilingInRadii!.Value, 8);
+
+        var floor = Assert.IsType<double>(profile.HoverFloorInRadii);
+        Assert.InRange(floor, 1.0, 1.15);
+
+        // Below the floor it is falling; above it, flying. That is the whole shape.
+        Assert.True(profile.Points[0].SpareAccelerationMetresPerSecondSquared < 0);
+        Assert.True(profile.Points[^1].SpareAccelerationMetresPerSecondSquared > 0);
+    }
+
+    [Fact]
+    public void AShipThatFliesFromThePadHasNoHoverFloor()
+    {
+        // The floor is only meaningful for a grounded ship; otherwise the first crossing is a
+        // ceiling and reporting both would describe two opposite things at once.
+        var profile = Profile(TestData.AtmosphericThrusterId, 40, 5_000);
+
+        Assert.Null(profile.HoverFloorInRadii);
+        Assert.NotNull(profile.HoverCeilingInRadii);
+    }
+
+    [Fact]
+    public void AHopelessLoadoutHasNeitherACeilingAboveGroundNorAFloor()
+    {
+        // Note what this nearly reported: at the top of the well gravity is zero and atmospheric
+        // thrust is zero too, so spare acceleration is exactly zero and the ship "hovers" — by
+        // being weightless, not by flying. A floor out in space for a loadout that cannot fly is
+        // worse than no floor at all, so the crossing has to be strictly positive.
+        var profile = Profile(TestData.AtmosphericThrusterId, 1, 10_000_000);
+
+        Assert.Equal(1.0, profile.HoverCeilingInRadii!.Value, 8);
+        Assert.Null(profile.HoverFloorInRadii);
+        Assert.Equal(0.0, profile.Points[^1].SpareAccelerationMetresPerSecondSquared, 8);
     }
 
     [Fact]
@@ -174,7 +279,7 @@ public class ClimbProfilerTests
         // here would read as "reaches space", which is the opposite of the truth.
         var profile = Profile(TestData.AtmosphericThrusterId, 1, 10_000_000);
 
-        Assert.Equal(1.0, profile.CeilingInRadii!.Value, 8);
+        Assert.Equal(1.0, profile.HoverCeilingInRadii!.Value, 8);
         Assert.False(profile.ReachesSpace);
     }
 
@@ -182,7 +287,7 @@ public class ClimbProfilerTests
     public void CeilingIsInterpolatedRatherThanSnappedToASample()
     {
         var profile = Profile(TestData.AtmosphericThrusterId, 40, 5_000);
-        var ceiling = profile.CeilingInRadii!.Value;
+        var ceiling = profile.HoverCeilingInRadii!.Value;
 
         // The crossing should sit strictly between the straddling samples, not on one of them.
         var below = profile.Points.Last(p => p.SpareAccelerationMetresPerSecondSquared > 0);

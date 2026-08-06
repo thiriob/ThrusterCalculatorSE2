@@ -47,8 +47,8 @@ gap by 95 kN and reads as broken arithmetic.
 
 ### Still open for v2
 
-- **B2 — the 2% on large blocks.** The 7.5 m container and 5 m tank disagree with measured mass in
-  opposite directions. The only wrong number left on screen.
+- **B2 — a constant 110 kg on large blocks.** Every block above ~2 470 occupied cells reads heavy by
+  the same 110 kg, and nothing below it does. The only wrong number left on screen.
 - **Polish and testing** of the configurator against real ships.
 
 ### Candidate, not committed: a power budget
@@ -72,9 +72,9 @@ because at sea level on an atmospheric world they produce nothing. Altitude is w
 
 More importantly it catches a real failure the app is blind to. On Verdure the air starts thinning
 **at ground level** (`constantAffectDistance = 1.0`), atmospheric thrust reaches zero at air density
-0.2, and gravity is still around half its surface value there. So a ship can lift off comfortably on
-pure atmospheric thrust and **be unable to leave the atmosphere** — it climbs, slows, and stops. That
-is the vertical-axis twin of the failure Design §3.2 exists to prevent.
+0.2, and gravity is still three quarters of its surface value there. So a ship can lift off
+comfortably on pure atmospheric thrust and **be unable to leave the atmosphere** — it climbs, slows,
+and stops. That is the vertical-axis twin of the failure Design §3.2 exists to prevent.
 
 It is also what makes mixing *mean* something: at one altitude, mixing is a cost-and-mass trade. The
 actual reason to mix is that different thrusters work at different heights.
@@ -84,8 +84,9 @@ actual reason to mix is that different thrusters work at different heights.
 - **A ceiling**, as a plain figure: *"reaches the atmosphere edge — stalls there"*. No new inputs.
   The same honesty as the covered-mass range: not a yes/no, but the boundary of what a loadout buys.
 - **A climb profile**, **altitude on the vertical axis** because the reader is following a climb.
-  Mocked up in the app today, drawn natively with `DrawingContext` (no charting package — Avalonia
-  has none, and one curve does not justify LiveCharts or ScottPlot).
+  Drawn natively with `DrawingContext` (no charting package — Avalonia has none, and one curve does
+  not justify LiveCharts or ScottPlot). Faint wherever the ship cannot hold itself up, so a mixed
+  loadout's handover dip reads at a glance.
 - **Spare acceleration, not thrust-to-weight**, on the horizontal axis. TWR is the right question
   beside a planet and a meaningless one away from it: weight tends to zero out of the gravity well,
   so *every* ship's ratio runs to infinity and a nimble ship reads identically to a sluggish one.
@@ -98,7 +99,8 @@ actual reason to mix is that different thrusters work at different heights.
 TWR remains the right *input* — "how much margin do I want at lift-off" is a ratio question — so the
 spinner stays. Input and output simply want different units here.
 - **Named heights, not radii.** Ground / atmosphere edge / space. Planet radii mean nothing to a
-  player, and naming them sidesteps the radius problem below entirely.
+  player. The names are what the reader navigates by; a kilometre figure sits alongside each one now
+  that the radius is extracted, because "6.6 km" alone would not say *what* is at 6.6 km.
 
 ### What had to land first — all three now have
 
@@ -122,9 +124,22 @@ Verdure's atmosphere edge. A one-parameter curve will always pass through one da
 arithmetic, not evidence (Research §5.3.1). Had the curve shipped unverified it would have been
 wrong by a factor of two in the middle of its range, and looked entirely plausible.
 
-**Planet radius stays open**, and did not block v3: it is needed only to express altitude in
-kilometres rather than named bands. If it is ever wanted, the lead is the shipped scenario worlds
-under `GameData\Vanilla\Worlds\` — real saves, and `Engine` already reads two other `.vrb` files.
+**Planet radius turned out to be extractable**, after this entry had twice written it off as
+world-instance data. It is two hops off the planet's own composition —
+`PlanetGeneratorDefinition → DetailCubemap → TargetPlanetRadius` — at 60 km for planets and 20 km for
+moons, with `ZeroGround` beside it placing the ground above the reference sphere (Research §5.3.1.2).
+
+**Not yet done: the chart has never been looked at.** Every number behind it is tested — the tick
+steps, the zero-crossing split, the coast integral, the band labels — but the rendering itself has
+only ever been reasoned about, because the view-model tests are headless and Avalonia binding
+failures are silent. **Run the app before trusting the picture**, and specifically check the faint
+stretches, the stop marker sitting on the curve rather than on the zero line, and the axis
+graduations at two very different loadout scales.
+
+It was never a blocker, which is why the design named heights instead of numbering them; that choice
+is what let v3 ship without it. It now buys kilometres on the axis, and it settles whether a coast
+survives the engine's speed cap — the one question in the whole model that a radius is genuinely
+required to answer.
 
 ---
 

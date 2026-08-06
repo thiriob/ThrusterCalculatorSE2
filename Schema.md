@@ -38,7 +38,7 @@ scalars, meaningful key names, no base64, no packed arrays.
 
 ```jsonc
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.4",
 
   "generator": {
     "tool": "tc",
@@ -64,6 +64,7 @@ scalars, meaningful key names, no base64, no packed arrays.
   "containers":   [ /* §4.5 */ ],
   "tanks":        [ /* §4.5 */ ],
   "planets":      [ /* §4.6 */ ],
+  "limits":       { /* §4.7 */ },
 
   "warnings":     [ /* §6 */ ]
 }
@@ -72,6 +73,18 @@ scalars, meaningful key names, no base64, no packed arrays.
 `schemaVersion` is `major.minor`. **Major mismatch → refuse to load, with a clear message.** Minor
 ahead → load, ignore unknown fields, note it. Configs outlive the app that wrote them; a user may
 hand a newer file to an older build.
+
+Every minor so far has been additive, and each addition is a field a consumer may simply not find:
+
+| | added | a reader without it should |
+|---|---|---|
+| 1.1 | `atmosphere.density` | assume 1.0 — right for every planet but Palatine |
+| 1.2 | the gravity falloff, `models.gravityFalloff` | decline to model altitude, not flatten it |
+| 1.3 | `limits` | decline to claim a ship coasts, not assume it accelerates forever |
+| 1.4 | `planets[].radiusMetres`, `groundOffsetInRadii` | name heights rather than measure them |
+
+In each case the fallback is to say less, never to invent a number — a config that predates a field
+must not silently acquire a different meaning (R6).
 
 ---
 
@@ -225,6 +238,8 @@ else.
   "name": "Verdure",
   "milestone": "VS2_3",                       // newest variant wins — Research §5.1
   "surfaceGravity": 9.80665,                  // m/s² — GravityGenerator.GravitationalAcceleration
+  "radiusMetres": 60000,                      // schema 1.4 — 60 km planets, 20 km moons
+  "groundOffsetInRadii": 0.015,               // schema 1.4 — sea level above the reference sphere
   "gravityAffectDistance": 1.35,              // × planet radius — gravity is 0 beyond here
   "gravityAccelerationDistance": 1.05,        // × planet radius — full gravity up to here
   "gravityFallOffPower": -1,                  // -1 = linear ramp between the two; else an exponent
@@ -262,12 +277,37 @@ air in it, where atmospheric thrusters produce nothing. A consumer that reads th
 assumes full density will rate them at 100% there. The producer emits an `airlessAtmosphere` warning
 for exactly this case (Backlog B16).
 
+**`radiusMetres` and `groundOffsetInRadii` also travel together**, and the second is the one that
+looks skippable. Every other distance in this object is a multiple of the radius, so the radius is
+what converts the model into kilometres — but **altitude is measured from the ground, and the ground
+is not the reference sphere.** The surface sits at `1 + groundOffsetInRadii`; on Verdure that is
+0.015, or 900 m. Ignoring it makes every height read low, and made a measured Verdure come out at
+50 km against the stated 60 km — an 18 % error that looked like evidence the radius was wrong
+(Research §5.3.1.1).
+
+Both are the *shipped* values. A world may spawn a planet at a size of its own choosing, so a
+consumer should offer an override, exactly as it does for `surfaceGravity`.
+
 **The three gravity falloff fields travel together.** A consumer needs all of
 `gravityAffectDistance`, `gravityAccelerationDistance` and `gravityFallOffPower` to evaluate gravity
 away from the surface; with any of them missing it should decline to model altitude rather than fall
 back to surface gravity everywhere, which would draw a confident flat line. `gravityShape` is a
 guard rather than a parameter — every shipped planet is `Spherical`, and anything else means the
 "height above the surface" model is about the wrong geometry.
+
+### 4.7 `limits`
+
+```jsonc
+"limits": { "maxSpeedMetresPerSecond": 300.0 }
+```
+
+Engine-wide, from `PhysicsSessionConfiguration.def`. One field today, and it is not trivia: a ship
+crosses a stretch it cannot hover in on kinetic energy banked lower down, and this caps how much it
+can bank. Past the limit, extra thrust buys no more speed and therefore no more altitude.
+
+`null` in configs before 1.3. A consumer without it must **decline to claim a ship coasts anywhere**
+rather than model it as accelerating indefinitely — the difference decides whether a loadout reaches
+space.
 
 ---
 
