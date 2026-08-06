@@ -17,12 +17,22 @@ public static class AtmosphereDensity
     /// Density in [0, 1] at <paramref name="distanceInRadii"/> (1.0 being the surface).
     /// </summary>
     /// <remarks>
-    /// Full density out to <see cref="Atmosphere.ConstantAffectDistance"/> (~1.08), then a linear
-    /// ramp to zero at <see cref="Atmosphere.AffectDistance"/> (~1.15). Both come from the planet's
-    /// own definition, so future and custom planets carry their own atmosphere shape.
+    /// <see cref="Atmosphere.Density"/> out to <see cref="Atmosphere.ConstantAffectDistance"/>
+    /// (~1.08), then a linear ramp to zero at <see cref="Atmosphere.AffectDistance"/> (~1.15). All
+    /// three come from the planet's own definitions, so future and custom planets carry their own
+    /// atmosphere.
     /// <para>
-    /// A <c>null</c> atmosphere means an airless body: density is zero everywhere, so atmospheric
-    /// thrusters produce nothing there.
+    /// This is the engine's own expression, from
+    /// <c>AtmosphereGeneratorComponent.AirDataOperations.AccumulateGeneratorEffect</c>:
+    /// <c>d &lt;= constant ? Density : Density / (affect - constant) * (affect - d)</c>. The engine
+    /// has no zero clamp on the far side because it never evaluates the ramp beyond
+    /// <c>AffectDistance</c> — the generator stops affecting entities there. Evaluating it anyway,
+    /// as a pure function must, needs the clamp the engine gets from culling.
+    /// </para>
+    /// <para>
+    /// A <c>null</c> atmosphere means an airless body: density is zero everywhere. So does a stated
+    /// <see cref="Atmosphere.Density"/> of zero, which is how Palatine is airless despite carrying
+    /// a full set of atmosphere distances.
     /// </para>
     /// </remarks>
     public static double LinearRampAltitude(Atmosphere? atmosphere, double distanceInRadii)
@@ -37,7 +47,7 @@ public static class AtmosphereDensity
 
         if (distanceInRadii <= full)
         {
-            return 1.0;
+            return atmosphere.Density;
         }
 
         if (distanceInRadii >= edge)
@@ -46,6 +56,6 @@ public static class AtmosphereDensity
         }
 
         // Guarded above: full < distance < edge implies edge > full, so this cannot divide by zero.
-        return (edge - distanceInRadii) / (edge - full);
+        return atmosphere.Density * (edge - distanceInRadii) / (edge - full);
     }
 }

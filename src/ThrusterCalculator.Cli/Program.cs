@@ -24,6 +24,8 @@ internal static class Program
                 "verify" => VerifyCommand.Run(rest),
                 "planet" => PlanetCommand.Run(rest),
                 "fingerprint" => FingerprintCommand.Run(rest),
+                "block" => BlockCommand.Run(rest),
+                "def" => DefCommand.Run(rest),
                 "-h" or "--help" or "help" => Help(),
                 _ => Unknown(command),
             };
@@ -62,6 +64,9 @@ internal static class Program
           verify          Check a local install against the invariants we rely on.
           planet [NAME]   Walk a planet's inheritance chain, showing where each
                           gravity and atmosphere value comes from — or stops.
+          block NAME      Dump a block's occupancy boxes, summed and as a true union.
+          def GUID [F...] Walk a definition's real base chain (from definitionsets.vrb)
+                          and say which ancestor states each named field, if any.
           fingerprint     Print the install's build and content fingerprint as JSON,
                           for staleness checks. Cheap enough to run on every launch.
 

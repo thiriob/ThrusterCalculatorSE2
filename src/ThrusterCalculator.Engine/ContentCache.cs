@@ -220,6 +220,105 @@ public sealed class ContentCache
     /// the recovered value was right.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// The raw occupancy boxes for a model, as the generator stored them.
+    /// </summary>
+    /// <remarks>
+    /// Exposed for diagnosis rather than for the extractor, which only wants the total. Two blocks
+    /// disagree with their in-game mass by about 2% in opposite directions (Backlog B2), and the
+    /// leading hypothesis is that these boxes overlap — <see cref="TryGetOccupiedCellCount"/> sums
+    /// them, mirroring <c>ComputeMassAndHP</c>, so any overlap is double-counted by both.
+    /// </remarks>
+    public IReadOnlyList<(int MinX, int MinY, int MinZ, int MaxX, int MaxY, int MaxZ)> CellGroupsOf(
+        Guid modelGuid)
+    {
+        if (!TryGetGenerated(modelGuid, out var generated)) return [];
+
+        var occupancy = generated!.GetType().GetField("Occupancy")?.GetValue(generated);
+        if (occupancy?.GetType().GetField("CellGroups")?.GetValue(occupancy)
+            is not System.Collections.IEnumerable groups)
+        {
+            return [];
+        }
+
+        var boxes = new List<(int, int, int, int, int, int)>();
+
+        foreach (var group in groups)
+        {
+            if (group is null) continue;
+
+            var min = ReadCell(group, "Min");
+            var max = ReadCell(group, "Max");
+
+            boxes.Add((min.X, min.Y, min.Z, max.X, max.Y, max.Z));
+        }
+
+        return boxes;
+    }
+
+    /// <summary>
+    /// Every field on the generated block data and its occupancy, as text.
+    /// </summary>
+    /// <remarks>
+    /// A blunt instrument for when a number disagrees with the game and the obvious explanation has
+    /// been ruled out: it shows what else the record carries, rather than assuming the two fields
+    /// we already read are the only ones that matter.
+    /// </remarks>
+    public IReadOnlyList<string> DescribeGenerated(Guid modelGuid)
+    {
+        if (!TryGetGenerated(modelGuid, out var generated)) return [];
+
+        var lines = new List<string>();
+
+        void Dump(object? value, string prefix, int depth)
+        {
+            if (value is null || depth > 2) return;
+
+            foreach (var field in value.GetType().GetFields())
+            {
+                object? item;
+                try
+                {
+                    item = field.GetValue(value);
+                }
+                catch (Exception ex)
+                {
+                    lines.Add($"{prefix}{field.Name} : <unreadable: {ex.GetType().Name}>");
+                    continue;
+                }
+
+                var type = field.FieldType.Name;
+
+                // An uninitialised ImmutableArray throws on Count rather than reporting zero, so
+                // every read here has to be defensive — the record is the game's, not ours.
+                try
+                {
+                    if (item is System.Collections.ICollection collection)
+                    {
+                        lines.Add($"{prefix}{field.Name} : {type} [{collection.Count}]");
+                        continue;
+                    }
+
+                    lines.Add($"{prefix}{field.Name} : {type} = {item}");
+                }
+                catch (Exception ex)
+                {
+                    lines.Add($"{prefix}{field.Name} : {type} <unreadable: {ex.GetType().Name}>");
+                    continue;
+                }
+
+                // Recurse into the engine's own structs, not into primitives.
+                if (item is not null && field.FieldType.Namespace?.StartsWith("Keen", StringComparison.Ordinal) == true)
+                {
+                    Dump(item, prefix + "    ", depth + 1);
+                }
+            }
+        }
+
+        Dump(generated, "  ", 0);
+        return lines;
+    }
+
     public bool TryGetOccupiedCellCount(Guid modelGuid, out int cells)
     {
         cells = 0;

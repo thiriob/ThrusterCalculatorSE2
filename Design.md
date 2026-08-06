@@ -209,7 +209,7 @@ Research §3.3 found `ThrustClassesConfiguration.def` — the complete effective
 |---|---|---|
 | Atmospheric | air density ≥ 0.8 | ≤ 0.2 |
 | Ion | air density ≤ 0.2 | ≥ 0.8 |
-| Hydrogen | everywhere (`Min = -1` sentinel) | — |
+| Hydrogen | everywhere (`Min = -1`, `Max = 0` — saturated, not a special case) | — |
 | Water | underwater only, not yet shipped |
 
 Combined with per-planet atmosphere geometry (full density to 1.08 R, zero by 1.15 R — Research

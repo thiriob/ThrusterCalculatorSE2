@@ -678,6 +678,17 @@ public sealed class GameDataExtractor
                     + "Left unknown rather than assumed; the planet is not in the game yet.",
                     sources[planet.Id], planet.Id);
             }
+
+            // Surprising enough to state outright, so nobody reads it as a bug in the app: the
+            // planet has an atmosphere's full geometry and no air in it.
+            if (planet.Atmosphere is { Density: <= 0.0 })
+            {
+                Warn("airlessAtmosphere",
+                    $"{planet.Name}: its atmosphere generator states a density of 0, so there is no "
+                    + "air at any altitude and atmospheric thrusters produce nothing there — "
+                    + "despite the planet carrying a normal set of atmosphere distances.",
+                    sources[planet.Id], planet.Id);
+            }
         }
 
         return planets.Values.OrderBy(p => p.Id, StringComparer.Ordinal).ToList();
@@ -717,9 +728,16 @@ public sealed class GameDataExtractor
         double? surfaceGravity = null;
         double? affect = null;
         double? constant = null;
+        double? density = null;
 
         foreach (var component in PlanetComponents(prefab))
         {
+            // A composite's component entry names the definition it uses rather than restating its
+            // values, and the atmosphere splits across the two: the distances are set on the
+            // component, the density on the definition. Resolving the reference is the only way to
+            // reach the second half.
+            density ??= AtmosphereDensityOf(component);
+
             var type = component.TryGetProperty("$Type", out var t)
                 ? t.GetString() ?? string.Empty
                 : string.Empty;
@@ -743,8 +761,43 @@ public sealed class GameDataExtractor
 
         return affect is { } a && constant is { } c
             ? new PlanetGeometry(gravity, surfaceGravity,
-                new Atmosphere { AffectDistance = a, ConstantAffectDistance = c }, true)
+                new Atmosphere
+                {
+                    AffectDistance = a,
+                    ConstantAffectDistance = c,
+
+                    // Every generator but Palatine's resolves to 1.0; the fallback only covers a
+                    // planet whose generator reference we could not follow at all.
+                    Density = density ?? 1.0,
+                },
+                true)
             : new PlanetGeometry(gravity, surfaceGravity, null, false);
+    }
+
+    /// <summary>
+    /// The <c>Density</c> of the atmosphere generator a component entry points at, if it points at
+    /// one.
+    /// </summary>
+    /// <remarks>
+    /// Identifies the generator by the <em>resolved definition's</em> type rather than by the type
+    /// named on the component entry, because the entry frequently does not name one: Verdure's
+    /// composite overrides the atmosphere with a bare
+    /// <c>{ "Kind": "Update", "Index": 14, "Value": { "Definition": "…" } }</c>, where the type is
+    /// carried only by the base composite's slot at that index. Matching on what the GUID resolves
+    /// to sidesteps having to replay the engine's delta indices.
+    /// </remarks>
+    private double? AtmosphereDensityOf(JsonElement component)
+    {
+        if (!component.TryGetProperty("Definition", out var reference)
+            || reference.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        var definition = _definitions.Resolve(reference.GetString());
+        return definition?.TypeName == "AtmosphereGeneratorDefinitionObjectBuilder"
+            ? InheritedDouble(definition, "Density")
+            : null;
     }
 
     /// <summary>

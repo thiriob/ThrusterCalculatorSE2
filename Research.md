@@ -143,7 +143,9 @@ Every `*ThrusterDefinition.def` under `Content\Blocks\Thrusters\`, all 12 of the
 Notes:
 
 - **The trailing numeral is block size in centimetres** (100 = 1 m, 1000 = 10 m), matching SE2's
-  variable-size grid. Not a tier index.
+  variable-size grid. Not a tier index. **True for thrusters, containers and tanks — everything the
+  app lists — but not universally:** the game shows `Drill500` as 5.25 m and `GatlingTurret600` as
+  5.5 m, so treat the numeral as an identifier rather than a promise (Backlog B2).
 - **Hydrogen omits `ThrustClass` entirely**, and its files are named `*_HydrogenThrusterDefinition.def`
   — but the `$Type` is the same `ThrusterDefinitionObjectBuilder`. **The parser must key off `$Type`,
   never filename**, and treat missing `ThrustClass` as valid.
@@ -254,8 +256,12 @@ the missing piece**. Reading it:
 - **Ion** — inverted: full thrust at density **≤ 0.2**, ramping to zero at **≥ 0.8**. Note `Max` is
   attached to the *low* density; the field names describe "the density at which max thrust occurs,"
   not an ordering. **Do not assume `Min < Max`** when parsing.
-- **Hydrogen** — `Min = -1` is a sentinel meaning *no falloff*: constant thrust everywhere. Matches
-  the community understanding, and confirms hydrogen is the environment-agnostic option.
+- **Hydrogen** — `Min = -1`, `Max = 0`: constant thrust everywhere, confirming hydrogen as the
+  environment-agnostic option. **This is not a sentinel, though it reads like one** and was
+  implemented as one here for a while. The engine has no `min < 0` branch; it runs the ordinary
+  ramp, `clamp((d − (−1)) / (0 − (−1)), 0, 1)` = `clamp(d + 1, 0, 1)`, which is 1 for every air
+  density a planet can have. The endpoints simply sit below the physical range. Same answer, and a
+  rule that would have been wrong for any class with `Min < 0` and `Max` inside `[0, 1]`.
 - **Water** — `WaterOnly: true`. A fourth class **already exists in config** even though no underwater
   thruster ships a definition (§3). Direct confirmation that underwater thrusters are staged for the
   water milestone.
@@ -264,9 +270,19 @@ Combined with §5.2's per-planet atmosphere geometry, this closes the loop: plan
 as a function of altitude, this config maps air density to a thrust multiplier per class. **The whole
 environmental model is readable JSON — no engine code required.**
 
-Between the two ramp points, assume linear interpolation on air density. That assumption should be
-verified in-game, but it's the standard SE1 behaviour and the two-point parameterisation strongly
-implies it.
+Between the two ramp points the interpolation is **linear** — originally assumed here from SE1
+behaviour, since **confirmed** against `GridMovementCollectorComponent.GetThrustEfficiency`:
+
+```csharp
+if (max >= min) return Math.Clamp((d - min) / (max - min), 0f, 1f);
+return 1f - Math.Clamp((d - max) / (min - max), 0f, 1f);
+```
+
+The two branches are the ordering rule above made explicit, and are algebraically the same as
+interpolating the signed interval. Total grid thrust is then `Σ (class thrust × efficiency)`.
+
+One correction the caveat above did *not* anticipate: the air density fed in is not purely
+geometric. See §5.2.1.
 
 The wiki's "Space = 0 / Atmosphere = 1" annotations are a lossy summary of this table — another
 reason to treat the wiki as a cross-check, not a source (§3.1).
@@ -727,6 +743,33 @@ This is a real find:
 
 These are **multipliers of planet radius**, all dimensionless.
 
+#### 5.2.1 The atmosphere's strength is not in this file
+
+The component above gives the atmosphere's *shape* and nothing about how much air is in it. The
+strength sits on the generator **definition** the component points at, and the engine joins the two
+in `AtmosphereGeneratorComponent`:
+
+```csharp
+SetData(new AtmosphereGeneratorData {
+    Density              = _definition.Density,   // from the referenced definition
+    AffectDistance       = ob.AffectDistance,     // from the component above
+    ConstantAffectDistance = ob.ConstantAffectDistance,
+    Resource             = _definition.Resource?.Name ?? StringId.NullOrEmpty });
+```
+
+Reading only the component therefore yields an atmosphere whose density is *assumed* to be 1.0 —
+which held for every planet checked until it didn't. **Palatine's generator states `Density: 0`**:
+a moon carrying a full set of atmosphere distances with no air inside them, where atmospheric
+thrusters produce nothing. There are exactly three atmosphere generator definitions in the game;
+that is the only one below 1 (Backlog B16).
+
+The general lesson is the one §7.3 keeps re-teaching from a different direction: **a value's absence
+from a `.def` file means nothing on its own.** Verdure's generator omits `Density` and the field's
+object-builder default is `0f`, so read literally the game's flagship atmospheric planet is airless
+— but the real `BaseGuid` graph in `definitionsets.vrb` has it inheriting `1` from the shared base.
+`tc def <guid> [field ...]` answers this directly, printing the chain and naming the ancestor that
+states each field.
+
 ### 5.3 SOLVED — surface gravity is in the definitions after all
 
 > **This section's original conclusion was wrong.** It is kept below, struck through, because *how*
@@ -740,9 +783,26 @@ model beside it:
   "GravitationalAcceleration": 9.80665,   // m/s² at the surface
   "AccelerationDistance": 1.05,           // constant out to here
   "AffectDistance": 1.35,                 // zero beyond here
-  "FallOffPower": -1,                     // exponent; -1 sentinel, as in thrust classes
+  "FallOffPower": -1,                     // exponent; -1 IS a sentinel here — linear falloff
   "GravityShape": "Spherical" }
 ```
+
+**`FallOffPower` decompiled** (`GravityGeneratorComponent.CalculateGravitationalAccelerationMagnitude`):
+
+```csharp
+if (fallOffPower >= 0f) num2 = Math.Pow(AccelerationDistance / r, fallOffPower);   // r != 0, else 1
+else /* asserts == -1 */ num2 = Math.Clamp(1.0 - (r - AccelerationDistance) / (AffectDistance - AccelerationDistance), 0.0, 1.0);
+return GravitationalAcceleration * num2;
+```
+
+A non-negative value is a genuine exponent — inverse square would be `2` — while `-1` selects a
+**linear** ramp, guarded by an assert reading "Currently only linear falloff is supported". And
+planets are all linear: `DefaultGravityGenerator.def` pins `MinFallOffPower` and `MaxFallOffPower`
+both to `-1`.
+
+Note the trap in the old comment above, now corrected: `-1` here is a real sentinel, while the
+identical-looking `-1` in a thrust class is not (§3.3). Two fields, same magic-looking value,
+opposite meanings — the resemblance was assumed and was wrong.
 
 All ten planets now extract as `measured`:
 
@@ -893,16 +953,16 @@ inheritance (§4.4.1). What remains is refinement, not blocking.
 
 Still open:
 
-1. **Air-density-vs-altitude curve shape** — §5.2 gives full density to 1.08 R and zero at 1.15 R;
-   §3.3 gives density → thrust multiplier. Is the density ramp between them linear? And is the
-   thrust ramp between `MinThrustAirDensity` and `MaxThrustAirDensity` linear? Verify in-game.
-   (Backlog B6.)
-2. **Surface gravity magnitude per planet** (§5.3) — user-editable value for v1;
+1. **Surface gravity magnitude per planet** (§5.3) — user-editable value for v1;
    `VRage.Voxels.SurfaceGravity` is the faithful route, and the engine hosting it needs now exists.
-3. **Verify the 750 cargo container's 2 150 400 kg** (§4.3) — plausibly a placeholder.
+2. **Verify the 750 cargo container's 2 150 400 kg** (§4.3) — plausibly a placeholder.
 
 Closed, kept because the answers are load-bearing:
 
+3. ~~Both effectiveness ramps' curve shape~~ — **answered by decompiling both, no measurement
+   needed** (Backlog B6). Air density and thrust effectiveness are each linear and clamped, exactly
+   as modelled. The same read found a third atmosphere parameter we were not extracting (§5.2.1) and
+   disproved a sentinel we had invented for negative `MinThrustAirDensity`.
 4. ~~Recover `V` for cargo containers and tanks~~ — **superseded** (§4.0.0). The content cache gives
    occupancy for 1,454 blocks, so nothing needs solving by hand.
 5. ~~Hydrogen mass per capacity unit~~ — **answered**: gas is massless, measured in game by watching
@@ -924,6 +984,26 @@ set per type. Built first, and it earned its keep immediately: it found the two 
 turns on, and it corrected a claim in this document that `ThrustDirection` appeared in no `.def`
 (Technic §10.4). **It is the patch-diffing tool** — on patch day, dump and diff against the previous
 output.
+
+**`tc block [NAME]`** — dumps a block's occupancy boxes from the content cache, counting the cells
+**two ways**: the engine's sum of group volumes, and a true union built by enumerating every cell
+into a set. With no name it surveys the whole catalogue. Built to settle Backlog B2, and it did —
+by killing the hypothesis rather than confirming it: **no block in the game has overlapping
+occupancy groups**, so the double-counting theory was wrong and the cell counts are sound.
+
+A diagnostic that disproves its own hypothesis is doing its job. Keep it: "is the occupancy sane?"
+recurs whenever a mass looks wrong.
+
+**`tc def <guid> [field ...]`** — prints a definition's real base chain out of `definitionsets.vrb`
+and, for each named field, the nearest ancestor that states it — or says outright that none does, so
+the type's default applies. Built because a `.def` that omits a field is genuinely ambiguous and the
+two readings can be opposite: Verdure's atmosphere generator omits `Density`, whose object-builder
+default is `0f`, but the graph shows it inheriting `1`. Reading the file alone would have made the
+game's main atmospheric planet airless (§5.2.1, Backlog B16).
+
+Keep it for the same reason as `tc block`: "where does this value actually come from?" is the
+question this data punishes you for guessing at, and the `.def` files cannot answer it — the parent
+pointer is not in them.
 
 **`tc verify`** — invariant checks against a real local install: every thruster pairs to a block
 definition, every referenced GUID resolves, all thrust positive (templates excluded — they carry

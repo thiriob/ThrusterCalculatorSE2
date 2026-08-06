@@ -147,9 +147,13 @@ Straight from `ThrustClassesConfiguration.def` (Research §3.3):
 ```
 
 ⚠ **`min` may exceed `max`** — that's how ion is expressed (full thrust at *low* density). Consumers
-must interpolate across the interval regardless of ordering. `minThrustAirDensity: -1` is the
-sentinel for *no falloff* (hydrogen). Both rules are load-bearing; get them wrong and ion thrusters
-silently invert.
+must interpolate across the interval regardless of ordering, and clamp to `[0, 1]`. That rule is
+load-bearing; get it wrong and ion thrusters silently invert.
+
+⚠ **`minThrustAirDensity: -1` is not a sentinel.** Hydrogen declares `min: -1, max: 0`, which the
+ordinary ramp already saturates at 1 for every density in `[0, 1]`. A consumer that special-cases
+negatives as "no falloff" gets the right answer for the wrong reason and diverges on any class with
+`min < 0` and `max` inside the physical range. Interpolate; do not branch (Backlog B6).
 
 ### 4.4 `thrusters`
 

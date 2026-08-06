@@ -482,7 +482,7 @@ view model's own coercion is a belt-and-braces second line, not the fix — the 
   without a display or a game. What they cannot catch is a broken *binding*, which is silent in
   Avalonia; for that, run the app with a trace listener attached and confirm it logs no warnings.
 - `Model.Tests` — the contract. Reads the committed synthetic fixture and asserts every edge case it
-  carries survives: null `thrustClass`, the `-1` no-falloff sentinel, inverted `min > max` ramp
+  carries survives: null `thrustClass`, the saturated `-1` ramp, inverted `min > max` ramp
   ordering, null `occupiedCells`, explicit nulls, provenance defaulting, schema-version refusal, and
   a write→read→write fixed point. The schema is the interface between the two halves, so it gets its
   own suite rather than riding along in `Core.Tests`.

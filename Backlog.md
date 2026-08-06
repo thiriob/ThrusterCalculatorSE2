@@ -32,38 +32,92 @@ warning clears on its own — if Keen adds the planet properly it will simply re
 **Consequence today:** `null` reads as *airless* to the calculator, so atmospheric thrusters report
 "no thrust" on Geomeles. Visible, not silent, and the planet is unreachable in game regardless.
 
-### B2 — Large blocks disagree with measured mass by about 2 %
+### B2 — A constant 110 kg gap on large blocks, mechanism unknown
 
-**Status:** cell counts come from the game's own content cache; small blocks match exactly, the two
-largest measured blocks do not.
+**Status:** our block-mass transcription is **provably exact**, and the game still disagrees. The gap
+is a constant **110 kg** on every block above roughly 2 470 occupied cells, and nothing below it.
 
-| Block | V (cache) | Computed | Measured | |
-|---|---:|---:|---:|---:|
-| Cargo Container 1.5 m | 216 | 245.2 | 245 | −0.1 % |
-| Cargo Container 2.5 m | 1 000 | 669.1 | 669 | −0.0 % |
-| Hydrogen Tank 1.5 m | 216 | 382.4 | 382 | −0.1 % |
-| **Cargo Container 7.5 m** | 26 912 | 5 092.1 | 4 982 | **−2.2 %** |
-| **Hydrogen Tank 5 m** | 1 820 | 1 534.9 | 1 565 | **+2.0 %** |
+#### The measurements
 
-Two things make this interesting:
+Ten blocks, measured the clean way — note the ship's mass, add **one** block, note it again:
 
-- **The errors point in opposite directions**, so it is not a simple systematic bias in the formula
-  or a constant offset.
-- **The tank case has two independent sources agreeing against the game.** Its `V = 1820` comes from
-  the content cache *and* independently from solving the published 1 534.87 kg mass — the two agreed
-  exactly. Yet the game shows 1 565 kg, which implies `V ≈ 1877`. So either the published figure and
-  the cache share a common origin that the running game does not use, or something else contributes
-  ~30 kg on that block.
+| Block | cells | mod | computed | measured | diff |
+|---|---:|---:|---:|---:|---:|
+| Cargo Container 2.5 m | 1 000 | 7 | 669.08 | 669 | 0.08 |
+| Hydrogen Tank 5 m | 1 820 | 11 | 1 534.87 | 1 534 | 0.87 |
+| Drill 5 m | 2 368 | 20 | 3 289.09 | 3 289 | 0.09 |
+| **Medical Room 5 m** | **2 460** | 20 | 3 368.70 | 3 368 | **0.70** |
+| **Landing Gear 5 m** | **2 486** | 20 | 3 390.98 | 3 281 | **109.98** |
+| Solar Panel 10 m | 3 200 | 11 | 2 186.09 | 2 076 | 110.09 |
+| Assembler 5 m | 4 000 | 20 | 4 561.29 | 4 451 | 110.29 |
+| Gatling Turret 6 m | 4 004 | 11 | 2 512.51 | 2 402 | 110.51 |
+| Wind Turbine 7.5 m | 8 880 | 11 | 4 097.81 | 3 988 | 109.81 |
+| Cargo Container 7.5 m | 26 912 | 7 | 5 092.09 | 4 982 | 110.09 |
+| Atmospheric Thruster 10 m | 28 876 | 11 | 8 342.74 | 8 233 | 109.74 |
+| Hydrogen Tank 12.5 m | 36 244 | 11 | 9 552.79 | 9 442 | 110.79 |
 
-Both affected blocks are large. Note the 5 m tank readings carry ~10 kg of noise (see B3), which is
-well below the 30 kg gap.
+**The threshold is between 2 460 and 2 486 cells.** The gap is additive, not proportional: it is the
+same 110 kg across density modifiers 7, 11 and 20, which no scaling error can produce. In cell terms
+the equivalent deficit ranges from 100 to 966, so it is a constant in *kilograms*, not in cells.
 
-**How to investigate:** dump raw `CellGroups` for both blocks and check for overlapping groups —
-`TryGetOccupiedCellCount` sums them, mirroring `ComputeMassAndHP`, so overlap would be double-counted
-by both. Also worth measuring a third large block to see whether the sign correlates with anything.
+#### Ruled out, with evidence
 
-**Consequence today:** two blocks are ~2 % out on their own mass. Small against their cargo capacity,
-but wrong, and not detectable programmatically — hence this entry rather than a warning.
+| | |
+|---|---|
+| Overlapping occupancy groups | `tc block` counts cells as the engine sums them and as a true union. **0 overlaps in the entire catalogue**, 98 multi-group blocks |
+| Something special about multi-group blocks | Atmospheric 5 m (27 groups), Ion 5 m (11) and Hydrogen 2.5 m (9) are all exact; Solar Panel 10 m has **1** group and is off |
+| Wrong density | Constant across modifiers 7 / 11 / 20 |
+| Wrong cell count | Would scale with the modifier; it does not |
+| `MAX_BLOCK_VOLUME = 8000` | Solar Panel at 3 200 cells is already off |
+| Our transcription of `ComputeMassAndHP` | **Decompiled again.** Identical to §5.4, down to the `float` cast |
+| Occupancy being transformed at load | `SetOccupancy` is a straight copy: `OccupiedGridCellsGroups = occupancyData.CellGroups` |
+| Something else writing `Mass` | Only the two assignments inside `ComputeMassAndHP` |
+| An extra term in the mass config | `CubeBlockMassConfiguration` has exactly one field, `MinBlockMass = 5` |
+
+#### What is left
+
+**The definition-side mass is correct and fully explained.** The gap must therefore live in how the
+grid reports mass — `CubeGridComponent` and `CubeGrid` carry no mass member.
+
+**The HUD path is now traced, and it is faithful too.** The number read off the screen is the
+physics body's mass, not a sum of block masses:
+
+```csharp
+// GridStatusModelServer
+base.GridMass = grid.Entity.Data.Get<RigidBodyMassProperties>().Mass;
+```
+
+and each block's contribution to that body comes straight back from the definition:
+
+```csharp
+// BlockPhysicsProvider.GetMassProperties
+value.ScaleProportionallyByMass(block.Definition.Mass);
+```
+
+So the collider's own computed mass is discarded and replaced by `Definition.Mass` — the very value
+we reproduce exactly. Both ends of the chain now check out, which makes the gap *more* puzzling, not
+less. What remains unexamined is the aggregation between them (`ComputeTotalMass` over the mass
+elements, which crosses into native physics) and anything that adds or removes a mass element.
+
+**One arithmetic note for whoever picks this up:** the gap is not exactly constant. Across the
+twelve rows it ranges 109.74–110.79, a spread of 1.05. That is *just* too wide to be one constant
+seen through a display that truncates (which would cap the spread at 1.00), and too wide for one
+seen through rounding. So either the displayed figure is not a straight truncation of a single
+offset, or the offset genuinely varies by about a kilogram — and neither reading is explained.
+
+**Deliberately not "fixed".** Subtracting 110 kg above ~2 470 cells would match every observation and
+explain nothing — precisely the kind of plausible correction this project has been burned by twice
+(the slot-signature densities, the curated gravity table). A number we cannot derive does not go in.
+
+#### Consequence today
+
+Three of twelve thrusters read heavy: **Ion 7.5 m, Hydrogen 7.5 m and Atmospheric 10 m**, by 110 kg
+each — 1.3 % on the largest. It feeds the self-weight solver, so counts and covered ranges involving
+those three are marginally conservative. Everything at 2 460 cells or below is exact.
+
+**Also learned:** the trailing numeral in a block name is *not* always its in-game size. `Drill500`
+displays as 5.25 m and `GatlingTurret600` as 5.5 m. It holds for thrusters, containers and tanks —
+everything the app lists — but Research §3's claim is too broad.
 
 ### B3 — ~~Gas mass~~ RESOLVED: gas is massless
 
@@ -141,19 +195,82 @@ rejects as producing no thrust while submersion is unmodelled.
 listed. Honest — they do not exist in this build in any usable sense — but it is a stated design
 behaviour that is not live, so it is recorded here rather than left to be rediscovered.
 
+### B16 — ~~Palatine was shown with a working atmosphere~~ RESOLVED: atmosphere density is now extracted
+
+**This was wrong output, not a gap.** Palatine is playable, and until this fix the app rated
+atmospheric thrusters at full effectiveness there. In game they produce **nothing**.
+
+An atmosphere is two halves of data in two places, and we were reading one:
+
+| | Where it lives | Read before? |
+|---|---|---|
+| `AffectDistance`, `ConstantAffectDistance` | the planet's generator **component**, inline in its prefab | yes |
+| `Density` | the generator **definition** the component points at | **no** |
+
+`AtmosphereGeneratorComponent` joins them — `Density = _definition.Density`, distances from the
+object builder — so reading only the component gets an atmosphere's shape with its strength silently
+assumed to be 1.0.
+
+The whole game contains exactly three atmosphere generator definitions:
+`PlanetAtmosphereGenerator` (`Density: 1`, the shared base), Verdure's (states none, **inherits 1**),
+and `Palatine_Client_AtmosphereGeneratorDefinition` — which states `Density: 0` outright, with no
+base to inherit from. So Palatine is the only affected planet, and it is affected totally: zero air
+at every altitude, `Resource: null`, an atmosphere's geometry wrapped around no air.
+
+**Resolving the omission needed the real inheritance graph, not the files.** Verdure's definition
+omits `Density`, and a `.def` that omits a field is ambiguous on its face — inherited, or the object
+builder's default? The default is `0f`, so the wrong reading makes the game's main atmospheric planet
+airless too. `BaseGuid` is not in the `.def` files at all; it lives in `definitionsets.vrb`. Added
+`tc def <guid> [field ...]` to settle exactly this class of question by walking the real graph and
+naming the ancestor that states each field. It reports Verdure inheriting `Density = 1` from the
+shared base, and Palatine stating `0` on its own.
+
+**Fixed:** `Atmosphere.Density` extracted and applied (`AtmosphereDensity.LinearRampAltitude` now
+scales plateau and ramp alike, matching the engine's expression term for term), schema 1.1 —
+additive, so 1.0 configs still load and default to 1.0, which was right for every planet but this
+one. Extraction emits an `airlessAtmosphere` warning naming Palatine, so the result does not read as
+a bug in the app.
+
 ## Modelling assumptions not yet verified in game
 
-### B6 — Both effectiveness ramps are assumed linear
+### B6 — ~~Both effectiveness ramps are assumed linear~~ RESOLVED: both are linear, read from the engine
 
-`ThrustClassesConfiguration` gives two endpoints per thrust class, and the atmosphere gives two
-distances. We interpolate linearly between each pair (Technic §5.3). That is the SE1 behaviour and
-what a two-point parameterisation implies, but it is **not confirmed**.
+Both ramps are confirmed linear, not by hovering at altitude but by decompiling the two methods that
+compute them. No in-game measurement was needed, and the "how to test" this entry used to carry is
+moot.
 
-**How to test:** hover at several altitudes on Verdure and compare displayed thrust against the
-model. Only matters once altitude is exposed (B7); at the surface both ramps are clamped anyway.
+**Thrust effectiveness** — `GridMovementCollectorComponent.GetThrustEfficiency`:
 
-Both are named models in the config, so a different curve is a new `kind` plus a `Core`
-implementation — contained by design.
+```csharp
+if (max >= min) return Math.Clamp((d - min) / (max - min), 0f, 1f);
+return 1f - Math.Clamp((d - max) / (min - max), 0f, 1f);
+```
+
+Linear, clamped, and split on endpoint order rather than normalising it — which is what we already
+did, and the mirrored branch is algebraically identical to interpolating the signed interval.
+
+**Air density** — `AtmosphereGeneratorComponent.AirDataOperations.AccumulateGeneratorEffect`:
+
+```csharp
+d <= ConstantAffectDistance ? Density : Density / (AffectDistance - ConstantAffectDistance) * (AffectDistance - d)
+```
+
+Also linear. The engine has no far-side zero clamp because it never evaluates past `AffectDistance`
+— the generator stops affecting entities there — so our clamp stands in for its culling.
+
+**Two things the same read corrected**, both now fixed:
+
+- **`Density` is a third parameter we were not reading**, and it is not always 1. See B16 — this was
+  a live wrong answer, not a v3 concern.
+- **A negative `MinThrustAirDensity` is not a sentinel.** We special-cased `min < 0` as "no falloff".
+  The engine has no such branch: hydrogen's `min = -1, max = 0` takes the ordinary path and yields
+  `clamp(d + 1, 0, 1)`, which is 1 for every density a planet can have. Same answer today, invented
+  mechanism, and it would have diverged for any class with `min < 0` and `max` inside the physical
+  range. Replaced with the engine's own branch structure and pinned by a test.
+
+Also confirmed in the same pass: total thrust is `Σ (class thrust × efficiency)` over thrust classes
+(`RecalculateMaxThrusts`), which is exactly what B8 concluded, and a thruster's rated thrust is its
+`ThrustPower` gated on fuel supply (`ThrusterComponent`).
 
 ---
 
@@ -165,17 +282,32 @@ The model already takes distance in planet radii; v1 evaluates at the surface be
 answers the lift-off question. An altitude slider needs B4 and B6 resolved to mean anything — and
 two further things that only became clear once gravity was measured in game (Research §5.3.1):
 
-**The gravity falloff model is already in the data** — it just is not extracted yet, because v1
-never leaves the surface. The same component that states surface gravity carries
-`AccelerationDistance` (constant out to here), `AffectDistance` (zero beyond), `FallOffPower` (the
-exponent, with `-1` as a sentinel exactly like thrust classes) and `GravityShape`. Extracting them
-is a few lines in `ReadPlanetGeometry` plus schema fields; **do it when altitude lands, not
-before**, so the config carries nothing unused.
+**The gravity falloff model is already in the data, and the curve is now known.** It just is not
+extracted yet, because v1 never leaves the surface. The same component that states surface gravity
+carries `AccelerationDistance` (constant out to here), `AffectDistance` (zero beyond), `FallOffPower`
+and `GravityShape`. Extracting them is a few lines in `ReadPlanetGeometry` plus schema fields; **do
+it when altitude lands, not before**, so the config carries nothing unused.
 
-In-game readings will still be worth taking as a check: Verdure reads 1.00 g on the ground and
-0.33 g near the boundary of space, and an inverse square would give 0.756 at the atmosphere edge —
-so whatever the model is, it is much steeper than Newton, and the extracted `FallOffPower` should
-say why.
+`GravityGeneratorComponent.CalculateGravitationalAccelerationMagnitude` gives the curve outright:
+
+```csharp
+if (fallOffPower >= 0f) num2 = Math.Pow(AccelerationDistance / r, fallOffPower);   // r != 0
+else /* asserts == -1 */ num2 = Math.Clamp(1.0 - (r - AccelerationDistance) / (AffectDistance - AccelerationDistance), 0.0, 1.0);
+return GravitationalAcceleration * num2;
+```
+
+So **here `-1` really is a sentinel** — for linear falloff, with an assert saying so ("Currently only
+linear falloff is supported"). Note the contrast with thrust classes, where the same-looking `-1` is
+not a sentinel at all (B6); the two were assumed to work alike and do not.
+
+Which branch planets take is settled too: `DefaultGravityGenerator.def` pins both `MinFallOffPower`
+and `MaxFallOffPower` to `-1`, so every procedurally generated planet is linear, and the legacy
+template states `AccelerationDistance: 1.05`. That matches the shape of the in-game readings — 1.00 g
+on the ground, falling much faster than Newton — where an inverse square would give 0.756 at the
+atmosphere edge.
+
+In-game readings are still worth taking as a check once radius is known, since the ratio is what
+those readings actually pin down.
 
 **Altitude needs planet radius, which we do not have.** Every distance in the data is expressed in
 planet radii, so turning "5 km up" into `r/R` requires `R` — and radius is per-world instance data

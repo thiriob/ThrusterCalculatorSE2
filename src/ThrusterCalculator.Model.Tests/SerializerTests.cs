@@ -189,7 +189,7 @@ public class SchemaVersionTests
     [Fact]
     public void FormatsRoundTrip()
     {
-        Assert.Equal("1.0", SchemaVersion.Current.ToString());
+        Assert.Equal("1.1", SchemaVersion.Current.ToString());
         Assert.True(SchemaVersion.TryParse(SchemaVersion.Current.ToString(), out var v));
         Assert.Equal(SchemaVersion.Current, v);
     }

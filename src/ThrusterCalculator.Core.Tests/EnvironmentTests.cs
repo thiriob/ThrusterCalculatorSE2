@@ -37,11 +37,30 @@ public class ThrustEffectivenessTests
     [InlineData(0.0)]
     [InlineData(0.5)]
     [InlineData(1.0)]
-    public void NegativeMinIsTheNoFalloffSentinel(double airDensity)
+    public void HydrogenIsSaturatedAcrossEveryPhysicalDensity(double airDensity)
     {
+        // Hydrogen declares min = -1, max = 0. That reads like a "no falloff" sentinel and was once
+        // implemented as one, but the engine has no such branch — it runs the ordinary ordered ramp
+        // and gets clamp((d + 1) / 1, 0, 1), which saturates at 1 for every d >= 0. The outcome is
+        // the same; only a class with min < 0 and max above the physical range would tell them
+        // apart, and none ships.
         var e = ThrustEffectiveness.LinearRampAirDensity(TestData.Hydrogen, airDensity);
 
         Assert.Equal(1.0, e);
+    }
+
+    [Fact]
+    public void ANegativeMinIsNotTreatedAsNoFalloff()
+    {
+        // The distinguishing case, pinned so the sentinel cannot be reintroduced: with max well
+        // inside the physical range the ramp is ordinary, and a sentinel would wrongly say 1.0.
+        var wide = new ThrustClass
+        {
+            Id = "wide", MinThrustAirDensity = -1.0, MaxThrustAirDensity = 1.0,
+        };
+
+        Assert.Equal(0.5, ThrustEffectiveness.LinearRampAirDensity(wide, 0.0), 10);
+        Assert.Equal(0.75, ThrustEffectiveness.LinearRampAirDensity(wide, 0.5), 10);
     }
 
     [Fact]
@@ -117,6 +136,45 @@ public class AtmosphereDensityTests
             Assert.True(density <= previous + 1e-12, $"density should not rise; broke at {d}");
             previous = density;
         }
+    }
+
+    [Theory]
+    [InlineData(1.00)]
+    [InlineData(1.05)]
+    [InlineData(1.15)]
+    [InlineData(2.00)]
+    public void ZeroDensityIsAirlessDespiteHavingAtmosphereDistances(double distanceInRadii)
+    {
+        // Palatine, exactly: a full set of atmosphere distances over a generator that states
+        // Density 0. Reading only the distances makes it look like a normal atmosphere and puts
+        // atmospheric thrusters at full effectiveness on a moon where they produce nothing.
+        var palatine = new Atmosphere
+        {
+            ConstantAffectDistance = 1.0, AffectDistance = 1.15, Density = 0.0,
+        };
+
+        Assert.Equal(0.0, AtmosphereDensity.LinearRampAltitude(palatine, distanceInRadii), 10);
+    }
+
+    [Fact]
+    public void DensityScalesThePlateauAndTheRampAlike()
+    {
+        var thin = new Atmosphere
+        {
+            ConstantAffectDistance = 1.08, AffectDistance = 1.15, Density = 0.4,
+        };
+
+        Assert.Equal(0.4, AtmosphereDensity.LinearRampAltitude(thin, 1.00), 10);
+        Assert.Equal(0.4, AtmosphereDensity.LinearRampAltitude(thin, 1.08), 10);
+        Assert.Equal(0.2, AtmosphereDensity.LinearRampAltitude(thin, (1.08 + 1.15) / 2), 10);
+        Assert.Equal(0.0, AtmosphereDensity.LinearRampAltitude(thin, 1.15), 10);
+    }
+
+    [Fact]
+    public void DensityDefaultsToFullSoSchemaOnePointZeroConfigsAreUnchanged()
+    {
+        Assert.Equal(1.0, new Atmosphere { ConstantAffectDistance = 1.08, AffectDistance = 1.15 }
+            .Density);
     }
 }
 

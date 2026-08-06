@@ -34,13 +34,33 @@ public sealed record Planet : ProvenanceAware
 }
 
 /// <summary>
-/// Atmosphere geometry, in multiples of planet radius (Research.md §5.2).
+/// Atmosphere geometry and strength (Research.md §5.2). Distances are multiples of planet radius.
 /// </summary>
 public sealed record Atmosphere
 {
     /// <summary>Air density reaches zero at this distance. Typically ~1.15.</summary>
     public required double AffectDistance { get; init; }
 
-    /// <summary>Air density is full (1.0) out to this distance. Typically ~1.08.</summary>
+    /// <summary>Air density is <see cref="Density"/> out to this distance. Typically ~1.08.</summary>
     public required double ConstantAffectDistance { get; init; }
+
+    /// <summary>
+    /// Air density inside <see cref="ConstantAffectDistance"/> — the plateau the ramp falls from.
+    /// </summary>
+    /// <remarks>
+    /// Not always 1.0, and not a formality: <b>Palatine states 0</b>, so it has an atmosphere's
+    /// geometry and no air in it, and atmospheric thrusters produce nothing there. Every other
+    /// planet in the game inherits 1.0.
+    /// <para>
+    /// The two halves live apart in the game's data — the distances on the planet's generator
+    /// <em>component</em>, this on the generator <em>definition</em> it points at — which is why an
+    /// earlier reader picked up the shape and silently assumed the strength
+    /// (<c>AtmosphereGeneratorComponent</c>: <c>Density = _definition.Density</c>).
+    /// </para>
+    /// <para>
+    /// Defaults to 1.0 so schema 1.0 configs, written before this was extracted, keep loading with
+    /// the behaviour they were generated under.
+    /// </para>
+    /// </remarks>
+    public double Density { get; init; } = 1.0;
 }

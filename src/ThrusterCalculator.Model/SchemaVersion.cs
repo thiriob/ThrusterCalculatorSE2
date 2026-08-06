@@ -12,7 +12,11 @@ namespace ThrusterCalculator.Model;
 public readonly record struct SchemaVersion(int Major, int Minor) : IComparable<SchemaVersion>
 {
     /// <summary>The version this build writes and expects.</summary>
-    public static readonly SchemaVersion Current = new(1, 0);
+    /// <remarks>
+    /// 1.1 added <see cref="Atmosphere.Density"/>. Additive, so 1.0 files still load — they simply
+    /// take the 1.0 default of full density, which was right for every planet but Palatine.
+    /// </remarks>
+    public static readonly SchemaVersion Current = new(1, 1);
 
     public static bool TryParse(string? text, out SchemaVersion version)
     {
